@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useLive2D, LIVE2D_CANVAS_SIZE, type Live2DDiagnostics, type FetchProbe } from './useLive2D'
+import { useLive2D, LIVE2D_CANVAS_SIZE, type Live2DDiagnostics } from './useLive2D'
 
 type AppState = 'idle' | 'recording' | 'preview' | 'playing'
 
@@ -62,14 +62,6 @@ const CYAN  = '#00E5FF'
 const RED   = '#FF6B6B'
 const RED2  = '#FF9999'
 
-function Section({ title, accent }: { title: string; accent?: boolean }) {
-  return (
-    <p style={{ fontSize: '9px', color: accent ? RED2 : MUTED, fontFamily: 'var(--font-display)', marginTop: '8px', marginBottom: '3px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-      {title}
-    </p>
-  )
-}
-
 function DiagRow({ label, ok, detail }: { label: string; ok: boolean | null; detail?: string }) {
   const icon = ok === null ? '⋯' : ok ? '✓' : '✗'
   const col  = ok === null ? MUTED : ok ? CYAN : RED
@@ -77,7 +69,7 @@ function DiagRow({ label, ok, detail }: { label: string; ok: boolean | null; det
     <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', fontSize: '11px', lineHeight: 1.7 }}>
       <span style={{ color: col, width: '14px', textAlign: 'center', flexShrink: 0 }}>{icon}</span>
       <span style={{ color: MUTED, flex: 1 }}>{label}</span>
-      {detail && <span style={{ color: col, maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '10px' }}>{detail}</span>}
+      {detail && <span style={{ color: col, maxWidth: '130px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '10px' }}>{detail}</span>}
     </div>
   )
 }
@@ -97,119 +89,43 @@ function Live2DDiagPanel({
   return (
     <div className="rounded-2xl animate-fade-in" style={{ background: 'rgba(10,8,26,0.95)', border, marginTop: '10px', padding: '10px 12px', maxHeight: '55vh', overflowY: 'auto' }}>
 
-      {/* ── Header ── */}
-      <p style={{ fontSize: '10px', color: isError ? RED2 : MUTED, fontFamily: 'var(--font-display)', marginBottom: '4px', letterSpacing: '0.05em' }}>
+      <p style={{ fontSize: '10px', color: isError ? RED2 : MUTED, fontFamily: 'var(--font-display)', marginBottom: '6px', letterSpacing: '0.05em' }}>
         {status === 'loading' ? '解析中…' : isError ? '読み込みエラー' : '診断ログ'}
       </p>
 
-      {diag && (<>
+      {diag && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+          <DiagRow label="選択ファイル数" ok={diag.fileCount > 0}       detail={`${diag.fileCount} 件`} />
+          <DiagRow label="model3.json"   ok={diag.model3Name !== null}  detail={diag.model3Name ?? '未検出'} />
+          <DiagRow label=".moc3"         ok={diag.mocFile !== null}     detail={diag.mocFile ?? '未検出'} />
+          <DiagRow
+            label="テクスチャ"
+            ok={diag.textureCount > 0 ? true : null}
+            detail={diag.textureCount > 0 ? `${diag.textureCount} 枚` : '未検出'}
+          />
+          <DiagRow
+            label="physics3.json"
+            ok={diag.physicsFile !== null ? true : null}
+            detail={diag.physicsFile ?? 'なし'}
+          />
+        </div>
+      )}
 
-        {/* ── 1. File resolution summary ── */}
-        <Section title="ファイル解決" />
-        <DiagRow label="選択ファイル数" ok={diag.fileCount > 0} detail={`${diag.fileCount} 件`} />
-        <DiagRow label="model3.json" ok={diag.model3Name !== null} detail={diag.model3Name ?? '未検出'} />
-        <DiagRow
-          label=".moc3"
-          ok={diag.mocFile ? diag.mocResolved : null}
-          detail={diag.mocFile
-            ? (diag.mocResolved ? diag.mocFile.split('/').pop()! : `未解決: ${diag.mocFile.split('/').pop()}`)
-            : '未検出'}
-        />
-        <DiagRow
-          label="テクスチャ"
-          ok={diag.textureCount > 0 ? diag.texturesResolved === diag.textureCount : null}
-          detail={diag.textureCount > 0 ? `${diag.texturesResolved}/${diag.textureCount} 枚` : '未検出'}
-        />
-        <DiagRow
-          label="physics3.json"
-          ok={diag.physicsFile ? diag.physicsResolved : null}
-          detail={diag.physicsFile ? (diag.physicsResolved ? '✓' : '未解決') : 'なし'}
-        />
-
-        {diag.unresolvedPaths.length > 0 && (
-          <div style={{ marginTop: '4px', padding: '5px 7px', borderRadius: '7px', background: 'rgba(255,107,107,0.08)' }}>
-            <p style={{ fontSize: '9px', color: RED2, marginBottom: '2px' }}>未解決パス ({diag.unresolvedPaths.length}件)</p>
-            {diag.unresolvedPaths.slice(0, 5).map((p, i) => (
-              <p key={i} style={{ ...MONO, color: RED }}>{p}</p>
-            ))}
-            {diag.unresolvedPaths.length > 5 && <p style={{ fontSize: '9px', color: MUTED }}>…他 {diag.unresolvedPaths.length - 5} 件</p>}
-          </div>
-        )}
-
-        {/* ── 2. Patched FileReferences snippet ── */}
-        {diag.patchedRefs && (
-          <>
-            <Section title="パッチ済み FileReferences" />
-            <div style={{ padding: '6px 8px', borderRadius: '7px', background: 'rgba(0,229,255,0.05)', border: '1px solid rgba(0,229,255,0.1)' }}>
-              {diag.patchedRefs.Moc !== undefined && (
-                <p style={{ ...MONO, color: diag.patchedRefs.Moc?.startsWith('blob:') ? CYAN : RED }}>
-                  Moc: {diag.patchedRefs.Moc?.slice(0, 52)}…
-                </p>
-              )}
-              {diag.patchedRefs.Textures?.map((t, i) => (
-                <p key={i} style={{ ...MONO, color: t.startsWith('blob:') ? CYAN : RED }}>
-                  Tex[{i}]: {t.slice(0, 50)}…
-                </p>
-              ))}
-              {diag.patchedRefs.Physics !== undefined && (
-                <p style={{ ...MONO, color: diag.patchedRefs.Physics?.startsWith('blob:') ? CYAN : RED }}>
-                  Physics: {diag.patchedRefs.Physics?.slice(0, 50)}…
-                </p>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* ── 3. Preflight fetch results ── */}
-        {diag.fetchProbes.length > 0 && (
-          <>
-            <Section title="Blob URL 疎通確認" />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              {diag.fetchProbes.map((p: FetchProbe, i: number) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '14px 1fr auto', gap: '5px', alignItems: 'start', fontSize: '10px', lineHeight: 1.6 }}>
-                  <span style={{ color: p.ok ? CYAN : RED, textAlign: 'center' }}>{p.ok ? '✓' : '✗'}</span>
-                  <div>
-                    <span style={{ color: MUTED }}>{p.label}</span>
-                    <p style={{ ...MONO, color: '#5A527A', marginTop: '1px' }}>{p.url.slice(0, 44)}…</p>
-                    {p.error && <p style={{ ...MONO, color: RED }}>{p.error}</p>}
-                  </div>
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <span style={{ color: p.ok ? CYAN : RED, fontFamily: 'var(--font-display)', fontSize: '10px' }}>
-                      {p.ok ? 'OK' : p.status != null ? `${p.status}` : 'ERR'}
-                    </span>
-                    {p.contentType && (
-                      <p style={{ fontSize: '8px', color: MUTED, whiteSpace: 'nowrap' }}>{p.contentType.split(';')[0]}</p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-      </>)}
-
-      {/* ── 4. Error message ── */}
+      {/* Error message */}
       {isError && errorMsg && (
         <div style={{ marginTop: '8px', padding: '8px', borderRadius: '8px', background: 'rgba(255,59,59,0.12)' }}>
           <p style={{ fontSize: '10px', color: RED2, lineHeight: 1.6, whiteSpace: 'pre-line', wordBreak: 'break-all' }}>{errorMsg}</p>
         </div>
       )}
 
-      {/* ── 5. NetworkError extra fields ── */}
+      {/* NetworkError detail */}
       {isError && diag && (diag.networkErrorUrl || diag.networkErrorStatus != null || diag.networkErrorStack) && (
         <div style={{ marginTop: '6px', padding: '7px 9px', borderRadius: '8px', background: 'rgba(255,59,59,0.07)', border: '1px solid rgba(255,107,107,0.2)' }}>
           <p style={{ fontSize: '9px', color: RED2, marginBottom: '4px', fontFamily: 'var(--font-display)' }}>NetworkError 詳細</p>
-          {diag.networkErrorUrl && (
-            <p style={{ ...MONO, color: RED }}>url: {diag.networkErrorUrl}</p>
-          )}
-          {diag.networkErrorStatus != null && (
-            <p style={{ ...MONO, color: RED }}>status: {diag.networkErrorStatus}</p>
-          )}
-          {diag.networkErrorAborted && (
-            <p style={{ ...MONO, color: RED2 }}>aborted: true</p>
-          )}
-          {diag.networkErrorStack && (
+          {diag.networkErrorUrl     && <p style={{ ...MONO, color: RED }}>url: {diag.networkErrorUrl}</p>}
+          {diag.networkErrorStatus != null && <p style={{ ...MONO, color: RED }}>status: {diag.networkErrorStatus}</p>}
+          {diag.networkErrorAborted && <p style={{ ...MONO, color: RED2 }}>aborted: true</p>}
+          {diag.networkErrorStack   && (
             <>
               <p style={{ fontSize: '9px', color: MUTED, marginTop: '4px' }}>stack:</p>
               <p style={{ ...MONO, color: '#6A6290', maxHeight: '60px', overflow: 'hidden' }}>
