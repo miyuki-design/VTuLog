@@ -100,9 +100,10 @@ function parseNetworkError(e: unknown): {
 // Hook
 // ──────────────────────────────────────────────
 export function useLive2D() {
-  const pixiAppRef     = useRef<any>(null)
-  const pixiCanvasRef  = useRef<HTMLCanvasElement | null>(null)
-  const loadedRef      = useRef(false)
+  const pixiAppRef          = useRef<any>(null)
+  const pixiCanvasRef       = useRef<HTMLCanvasElement | null>(null)
+  const loadedRef           = useRef(false)
+  const settingsObjectURLRef = useRef<string | null>(null)
 
   const [status,      setStatus]      = useState<Live2DStatus>('idle')
   const [errorMsg,    setErrorMsg]    = useState<string | null>(null)
@@ -113,6 +114,10 @@ export function useLive2D() {
     if (pixiAppRef.current) {
       try { pixiAppRef.current.destroy(true) } catch { /* ignore */ }
       pixiAppRef.current = null
+    }
+    if (settingsObjectURLRef.current) {
+      try { URL.revokeObjectURL(settingsObjectURLRef.current) } catch { /* ignore */ }
+      settingsObjectURLRef.current = null
     }
     pixiCanvasRef.current = null
     loadedRef.current = false
@@ -149,7 +154,18 @@ export function useLive2D() {
       ;(window as any).PIXI = PIXI
       await new Promise<void>(r => setTimeout(r, 0))
 
-      const { Live2DModel } = await import('pixi-live2d-display/cubism4')
+      const { Live2DModel, Cubism4ModelSettings } = await import('pixi-live2d-display/cubism4')
+
+      // ── Build Cubism4ModelSettings manually ──
+      // Bypasses FileLoader's findRuntime() / "Unknown settings JSON" check.
+      // Attach the settings object to the file array so pixi-live2d-display
+      // skips runtime auto-detection and uses Cubism4 directly.
+      const model3File = files.find(f => f.name.endsWith('.model3.json'))!
+      const json: any = JSON.parse(await model3File.text())
+      json.url = model3File.webkitRelativePath || model3File.name
+      const settings = new (Cubism4ModelSettings as any)(json)
+      const settingsObjectURL = URL.createObjectURL(model3File)
+      settings._objectURL = settingsObjectURL
 
       const canvas = document.createElement('canvas')
       canvas.width  = LIVE2D_CANVAS_SIZE
@@ -169,16 +185,17 @@ export function useLive2D() {
       } as any)
 
       if (!app.renderer || !app.view) {
+        URL.revokeObjectURL(settingsObjectURL)
         throw new Error('PixiJS renderer の初期化に失敗しました')
       }
 
       pixiAppRef.current    = app
       pixiCanvasRef.current = canvas
+      settingsObjectURLRef.current = settingsObjectURL
 
-      // ── Pass File[] directly to pixi-live2d-display's FileLoader ──
-      // webkitRelativePath is preserved on each File object so the built-in
-      // loader can resolve moc3 / textures / physics relative to model3.json.
-      const fileArray = Array.from(files)
+      // Attach pre-built settings so FileLoader skips findRuntime()
+      const fileArray = Array.from(files) as any
+      fileArray.settings = settings
       const model = await (Live2DModel as any).from(fileArray, { autoInteract: false })
       app.stage.addChild(model)
 
@@ -220,6 +237,10 @@ export function useLive2D() {
       if (pixiAppRef.current) {
         try { pixiAppRef.current.destroy(true) } catch { /* ignore */ }
         pixiAppRef.current = null
+      }
+      if (settingsObjectURLRef.current) {
+        try { URL.revokeObjectURL(settingsObjectURLRef.current) } catch { /* ignore */ }
+        settingsObjectURLRef.current = null
       }
       pixiCanvasRef.current = null
       loadedRef.current = false
