@@ -207,8 +207,8 @@ function getTouchDist(t1: { clientX: number; clientY: number }, t2: { clientX: n
 }
 
 // Internal canvas resolution (portrait 9:16)
-const CW = 720
-const CH = 1280
+const CW = 1080
+const CH = 1920
 
 export default function App() {
   // ── Camera ──
