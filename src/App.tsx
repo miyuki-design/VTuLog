@@ -536,7 +536,15 @@ export default function App() {
 
     let audioStream: MediaStream | null = null
     try {
-      audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      audioStream = await navigator.mediaDevices.getUserMedia({
+  audio: {
+    sampleRate: { ideal: 48000 },
+    channelCount: { ideal: 1 },
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  },
+})
       audioStreamRef.current = audioStream
     } catch {
       setMicError('マイクへのアクセスが拒否されました（映像のみ録画）')
