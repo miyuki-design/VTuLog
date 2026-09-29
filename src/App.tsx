@@ -93,11 +93,12 @@ function Live2DDiagPanel({
         {status === 'loading' ? '解析中…' : isError ? '読み込みエラー' : '診断ログ'}
       </p>
 
-      {diag && (
+      {diag && (<>
+        {/* ── 1. File inventory ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
-          <DiagRow label="選択ファイル数" ok={diag.fileCount > 0}       detail={`${diag.fileCount} 件`} />
-          <DiagRow label="model3.json"   ok={diag.model3Name !== null}  detail={diag.model3Name ?? '未検出'} />
-          <DiagRow label=".moc3"         ok={diag.mocFile !== null}     detail={diag.mocFile ?? '未検出'} />
+          <DiagRow label="選択ファイル数" ok={diag.fileCount > 0}      detail={`${diag.fileCount} 件`} />
+          <DiagRow label="model3.json"   ok={diag.model3Name !== null} detail={diag.model3Name ?? '未検出'} />
+          <DiagRow label=".moc3"         ok={diag.mocFile !== null}    detail={diag.mocFile ?? '未検出'} />
           <DiagRow
             label="テクスチャ"
             ok={diag.textureCount > 0 ? true : null}
@@ -109,7 +110,55 @@ function Live2DDiagPanel({
             detail={diag.physicsFile ?? 'なし'}
           />
         </div>
-      )}
+
+        {/* ── 2. Path resolution diagnostics ── */}
+        {(diag.model3WebkitPath || diag.settingsUrl || diag.resolvedMocPath) && (
+          <div style={{ marginTop: '8px', padding: '6px 8px', borderRadius: '7px', background: 'rgba(0,229,255,0.04)', border: '1px solid rgba(0,229,255,0.12)' }}>
+            <p style={{ fontSize: '9px', color: CYAN, marginBottom: '4px', fontFamily: 'var(--font-display)', letterSpacing: '0.05em' }}>パス解決</p>
+            {diag.model3WebkitPath && (
+              <p style={{ ...MONO, color: MUTED }}>
+                <span style={{ color: '#5A527A' }}>webkitRelPath: </span>{diag.model3WebkitPath}
+              </p>
+            )}
+            {diag.settingsUrl && (
+              <p style={{ ...MONO, color: MUTED }}>
+                <span style={{ color: '#5A527A' }}>settings.url:  </span>{diag.settingsUrl}
+              </p>
+            )}
+            {diag.resolvedMocPath && (() => {
+              const mocActualPath = diag.allWebkitPaths.find(p => p.endsWith('.moc3'))
+              const match = mocActualPath === diag.resolvedMocPath
+              return (
+                <>
+                  <p style={{ ...MONO, color: match ? CYAN : RED }}>
+                    <span style={{ color: '#5A527A' }}>resolveURL(moc): </span>{diag.resolvedMocPath}
+                  </p>
+                  {mocActualPath && (
+                    <p style={{ ...MONO, color: match ? CYAN : RED }}>
+                      <span style={{ color: '#5A527A' }}>actual webkit:   </span>{mocActualPath}
+                      <span style={{ marginLeft: '6px' }}>{match ? '✓ 一致' : '✗ 不一致'}</span>
+                    </p>
+                  )}
+                </>
+              )
+            })()}
+          </div>
+        )}
+
+        {/* ── 3. All webkitRelativePaths ── */}
+        {diag.allWebkitPaths.length > 0 && (
+          <div style={{ marginTop: '6px' }}>
+            <p style={{ fontSize: '9px', color: MUTED, marginBottom: '3px', fontFamily: 'var(--font-display)' }}>
+              選択ファイル一覧 ({diag.allWebkitPaths.length}件)
+            </p>
+            <div style={{ maxHeight: '80px', overflowY: 'auto', padding: '4px 6px', borderRadius: '6px', background: 'rgba(255,255,255,0.03)' }}>
+              {diag.allWebkitPaths.map((p, i) => (
+                <p key={i} style={{ ...MONO, color: '#5A527A' }}>{p}</p>
+              ))}
+            </div>
+          </div>
+        )}
+      </>)}
 
       {/* Error message */}
       {isError && errorMsg && (
