@@ -20,9 +20,11 @@ export interface Live2DDiagnostics {
   physicsFile: string | null
   // Path resolution
   settingsUrl: string | null
-  resolvedMocPath: string | null
-  mocNormalizedPath: string | null
-  mocPathMatch: boolean | null
+  resolvedMocPath: string | null       // raw  resolveURL(moc)
+  encodedMocPath: string | null        // encodeURI(resolveURL(moc))
+  mocNormalizedPath: string | null     // clone's raw webkitRelativePath
+  encodedMocWebkit: string | null      // encodeURI(clone.webkitRelativePath)
+  mocPathMatch: boolean | null         // encodedMocPath === encodedMocWebkit
   // Per-file normalization log
   normalizedFiles: NormalizedFileInfo[]
   // NetworkError
@@ -42,7 +44,9 @@ const EMPTY_DIAG: Live2DDiagnostics = {
   physicsFile: null,
   settingsUrl: null,
   resolvedMocPath: null,
+  encodedMocPath: null,
   mocNormalizedPath: null,
+  encodedMocWebkit: null,
   mocPathMatch: null,
   normalizedFiles: [],
 }
@@ -261,33 +265,47 @@ export function useLive2D() {
       const settingsObjectURL = URL.createObjectURL(model3File)
       settings._objectURL = settingsObjectURL
 
-      // Resolved path for moc — must equal the normalised webkitRelativePath
-      const resolvedMocPath: string | null = settings.moc
-        ? (() => { try { return settings.resolveURL(settings.moc) } catch { return null } })()
-        : null
+      // ── Compute raw and encoded moc paths for comparison ──
+      const tryResolve = (p: string) => { try { return settings.resolveURL(p) } catch { return null } }
+      const resolvedMocPath: string | null = settings.moc ? tryResolve(settings.moc) : null
+      const encodedMocPath:  string | null = resolvedMocPath ? encodeURI(resolvedMocPath) : null
 
       const mocClone = normalizedFiles.find(f => f.name.endsWith('.moc3'))
-      const mocNormalizedPath = mocClone?.webkitRelativePath ?? null
-      const mocPathMatch = resolvedMocPath !== null && mocNormalizedPath !== null
-        ? resolvedMocPath === mocNormalizedPath
-        : null
+      const mocNormalizedPath: string | null = mocClone?.webkitRelativePath ?? null
+      const encodedMocWebkit:  string | null = mocNormalizedPath ? encodeURI(mocNormalizedPath) : null
 
-      // Update diagnostics with normalization info
+      // FileLoader compares encodeURI(file.webkitRelativePath) with encodeURI(resolveURL(path))
+      const mocPathMatch =
+        encodedMocPath !== null && encodedMocWebkit !== null
+          ? encodedMocPath === encodedMocWebkit
+          : null
+
       setDiagnostics({
         ...initialDiag,
         settingsUrl:       settings.url ?? json.url,
         resolvedMocPath,
+        encodedMocPath,
         mocNormalizedPath,
+        encodedMocWebkit,
         mocPathMatch,
         normalizedFiles:   log,
       })
 
-      // Guard: warn if paths don't match — load will fail
+      // Guard before attempting load
       if (mocPathMatch === false) {
         throw new Error(
-          `パス不一致: resolveURL(moc) = "${resolvedMocPath}" ≠ webkitRelativePath = "${mocNormalizedPath}"`
+          `パス不一致 (encoded):\n  resolveURL → "${encodedMocPath}"\n  webkit     → "${encodedMocWebkit}"`
         )
       }
+
+      // ── Override resolveURL to return encodeURI-wrapped paths ──
+      // FileLoader.factory calls encodeURI(file.webkitRelativePath) when building
+      // the lookup map, but compares against resolveURL() output directly.
+      // Wrapping resolveURL ensures both sides are URI-encoded and match.
+      // FileLoader overwrites resolveURL with its own blob resolver after
+      // validateFiles() succeeds, so this override is only active during validation.
+      const originalResolveURL = settings.resolveURL.bind(settings)
+      settings.resolveURL = (path: string) => encodeURI(originalResolveURL(path))
 
       // ── PixiJS v7 Application ──
       const canvas = document.createElement('canvas')
