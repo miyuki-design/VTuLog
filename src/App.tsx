@@ -93,4 +93,4 @@ function Live2DDiagPanel({
         {status === 'loading' ? '解析中…' : isError ? '読み込みエラー' : '診断ログ'}
       </p>
 
-      {diag && (<>
+      {diag && (<div>
