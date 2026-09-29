@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useLive2D, LIVE2D_CANVAS_SIZE } from './useLive2D'
+import { useLive2D, LIVE2D_CANVAS_SIZE, type Live2DDiagnostics } from './useLive2D'
 
 type AppState = 'idle' | 'recording' | 'preview' | 'playing'
 
@@ -53,6 +53,98 @@ function buildPresetSVG(av: typeof PRESET_AVATARS[0]) {
     <ellipse cx="22" cy="56" rx="5" ry="6" fill="#FFE0C8"/>
     <ellipse cx="78" cy="56" rx="5" ry="6" fill="#FFE0C8"/>
   </svg>`
+}
+
+// ── Live2D Diagnostics Panel ──
+function DiagRow({ label, ok, detail }: { label: string; ok: boolean | null; detail?: string }) {
+  const icon = ok === null ? '⋯' : ok ? '✓' : '✗'
+  const col = ok === null ? '#8B82B0' : ok ? '#00E5FF' : '#FF6B6B'
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', fontSize: '11px', lineHeight: 1.7 }}>
+      <span style={{ color: col, fontFamily: 'var(--font-display)', width: '14px', textAlign: 'center', shrink: 0 }}>{icon}</span>
+      <span style={{ color: '#8B82B0', flex: 1 }}>{label}</span>
+      {detail && <span style={{ color: col, fontFamily: 'var(--font-display)', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detail}</span>}
+    </div>
+  )
+}
+
+function Live2DDiagPanel({
+  diag, status, errorMsg,
+}: {
+  diag: Live2DDiagnostics | null
+  status: string
+  errorMsg: string | null
+}) {
+  if (!diag && status === 'idle') return null
+  return (
+    <div
+      className="rounded-2xl p-3 animate-fade-in"
+      style={{
+        background: 'rgba(13,11,30,0.92)',
+        border: status === 'error' ? '1px solid rgba(255,107,107,0.5)' : '1px solid rgba(0,229,255,0.25)',
+        marginTop: '10px',
+      }}
+    >
+      <p style={{ fontSize: '10px', color: '#8B82B0', fontFamily: 'var(--font-display)', marginBottom: '6px', letterSpacing: '0.05em' }}>
+        {status === 'loading' ? '解析中…' : status === 'error' ? '読み込みエラー' : '診断ログ'}
+      </p>
+
+      {diag && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+          <DiagRow
+            label="選択ファイル数"
+            ok={diag.fileCount > 0}
+            detail={`${diag.fileCount} 件`}
+          />
+          <DiagRow
+            label="model3.json"
+            ok={diag.model3Name !== null}
+            detail={diag.model3Name ?? '未検出'}
+          />
+          <DiagRow
+            label=".moc3 ファイル"
+            ok={diag.mocFile ? diag.mocResolved : null}
+            detail={diag.mocFile
+              ? (diag.mocResolved ? diag.mocFile.split('/').pop()! : `未解決: ${diag.mocFile.split('/').pop()}`)
+              : '未検出'}
+          />
+          <DiagRow
+            label="テクスチャ"
+            ok={diag.textureCount > 0 ? diag.texturesResolved === diag.textureCount : null}
+            detail={diag.textureCount > 0
+              ? `${diag.texturesResolved} / ${diag.textureCount} 枚`
+              : '未検出'}
+          />
+          <DiagRow
+            label="physics3.json"
+            ok={diag.physicsFile ? diag.physicsResolved : null}
+            detail={diag.physicsFile
+              ? (diag.physicsResolved ? '✓' : '未解決')
+              : 'なし'}
+          />
+          {diag.unresolvedPaths.length > 0 && (
+            <div style={{ marginTop: '6px', padding: '6px', borderRadius: '8px', background: 'rgba(255,107,107,0.1)' }}>
+              <p style={{ fontSize: '9px', color: '#FF9999', marginBottom: '3px' }}>未解決パス ({diag.unresolvedPaths.length}件)</p>
+              {diag.unresolvedPaths.slice(0, 4).map((p, i) => (
+                <p key={i} style={{ fontSize: '9px', color: '#FF6B6B', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {p}
+                </p>
+              ))}
+              {diag.unresolvedPaths.length > 4 && (
+                <p style={{ fontSize: '9px', color: '#8B82B0' }}>…他 {diag.unresolvedPaths.length - 4} 件</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {status === 'error' && errorMsg && (
+        <div style={{ marginTop: '8px', padding: '8px', borderRadius: '8px', background: 'rgba(255,59,59,0.12)' }}>
+          <p style={{ fontSize: '10px', color: '#FF9999', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{errorMsg}</p>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function formatTime(s: number) {
@@ -771,36 +863,36 @@ export default function App() {
                 </button>
               )}
 
-              {/* Loading state */}
-              {live2d.status === 'loading' && (
-                <div className="flex items-center gap-2 py-2 mb-2">
-                  <div className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin shrink-0" style={{ borderColor: 'var(--color-cyan)' }} />
-                  <span style={{ fontSize: '11px', color: 'var(--color-muted)' }}>読み込み中…</span>
-                </div>
-              )}
-
-              {/* Error state */}
-              {live2d.status === 'error' && (
-                <div className="rounded-xl px-2.5 py-2 mb-2" style={{ background: 'rgba(255,59,59,0.1)', border: '1px solid rgba(255,59,59,0.3)' }}>
-                  <p style={{ fontSize: '10px', color: 'rgba(255,100,100,0.9)', lineHeight: 1.5 }}>{live2d.errorMsg}</p>
-                </div>
-              )}
-
               {/* Folder select button */}
               <button
                 className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 transition-all active:scale-95"
-                style={{ background: 'rgba(0,229,255,0.08)', border: '1px dashed rgba(0,229,255,0.4)' }}
+                style={{
+                  background: live2d.status === 'loading' ? 'rgba(0,229,255,0.05)' : 'rgba(0,229,255,0.08)',
+                  border: '1px dashed rgba(0,229,255,0.4)',
+                  opacity: live2d.status === 'loading' ? 0.6 : 1,
+                }}
                 onClick={() => live2dFolderInputRef.current?.click()}
                 disabled={live2d.status === 'loading'}
               >
-                <span style={{ fontSize: '16px' }}>📂</span>
+                {live2d.status === 'loading'
+                  ? <div className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'var(--color-cyan)' }} />
+                  : <span style={{ fontSize: '16px' }}>📂</span>}
                 <span style={{ fontSize: '11px', color: 'var(--color-cyan)', fontFamily: 'var(--font-display)' }}>
-                  {live2d.status === 'loaded' ? 'モデルを変更' : 'モデルフォルダを選択'}
+                  {live2d.status === 'loaded' ? 'モデルを変更' : live2d.status === 'loading' ? '読み込み中…' : 'モデルフォルダを選択'}
                 </span>
               </button>
               <p style={{ fontSize: '9px', color: 'var(--color-muted)', marginTop: '6px', lineHeight: 1.6 }}>
                 .model3.json を含むフォルダを丸ごと選択してください
               </p>
+
+              {/* Diagnostics panel — shown while loading and on error */}
+              {(live2d.status === 'loading' || live2d.status === 'error') && (
+                <Live2DDiagPanel
+                  diag={live2d.diagnostics}
+                  status={live2d.status}
+                  errorMsg={live2d.errorMsg}
+                />
+              )}
             </div>
           )}
 
