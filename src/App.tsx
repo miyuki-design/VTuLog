@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useLive2D, LIVE2D_CANVAS_SIZE, type Live2DDiagnostics } from './useLive2D'
+import { useLive2D, LIVE2D_CANVAS_SIZE, type Live2DDiagnostics, type FetchProbe } from './useLive2D'
 
 type AppState = 'idle' | 'recording' | 'preview' | 'playing'
 
@@ -135,12 +135,55 @@ function Live2DDiagPanel({
               )}
             </div>
           )}
+
+          {/* Preflight fetch results */}
+          {diag.fetchProbes.length > 0 && (
+            <div style={{ marginTop: '8px' }}>
+              <p style={{ fontSize: '9px', color: '#8B82B0', marginBottom: '3px', fontFamily: 'var(--font-display)' }}>
+                Blob URL 疎通確認
+              </p>
+              {diag.fetchProbes.map((p: FetchProbe, i: number) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: '5px', fontSize: '10px', lineHeight: 1.7 }}>
+                  <span style={{ color: p.ok ? '#00E5FF' : '#FF6B6B', width: '14px', textAlign: 'center', flexShrink: 0 }}>
+                    {p.ok ? '✓' : '✗'}
+                  </span>
+                  <span style={{ color: '#8B82B0', flexShrink: 0 }}>{p.label}</span>
+                  <span style={{ color: p.ok ? '#00E5FF' : '#FF9999', flexShrink: 0, fontFamily: 'var(--font-display)' }}>
+                    {p.ok ? 'OK' : (p.status != null ? `HTTP ${p.status}` : 'ERR')}
+                  </span>
+                  <span style={{ color: '#5A527A', fontSize: '9px', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                    {p.url.slice(0, 40)}…
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {status === 'error' && errorMsg && (
         <div style={{ marginTop: '8px', padding: '8px', borderRadius: '8px', background: 'rgba(255,59,59,0.12)' }}>
-          <p style={{ fontSize: '10px', color: '#FF9999', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{errorMsg}</p>
+          <p style={{ fontSize: '10px', color: '#FF9999', lineHeight: 1.6, whiteSpace: 'pre-line', wordBreak: 'break-all' }}>{errorMsg}</p>
+        </div>
+      )}
+
+      {/* NetworkError extra fields */}
+      {status === 'error' && diag && (diag.networkErrorUrl || diag.networkErrorStatus != null) && (
+        <div style={{ marginTop: '6px', padding: '6px 8px', borderRadius: '8px', background: 'rgba(255,59,59,0.08)', border: '1px solid rgba(255,107,107,0.25)' }}>
+          <p style={{ fontSize: '9px', color: '#FF9999', marginBottom: '2px', fontFamily: 'var(--font-display)' }}>NetworkError 詳細</p>
+          {diag.networkErrorUrl && (
+            <p style={{ fontSize: '9px', color: '#FF6B6B', fontFamily: 'monospace', wordBreak: 'break-all', lineHeight: 1.5 }}>
+              URL: {diag.networkErrorUrl}
+            </p>
+          )}
+          {diag.networkErrorStatus != null && (
+            <p style={{ fontSize: '9px', color: '#FF6B6B' }}>
+              HTTP status: {diag.networkErrorStatus}
+            </p>
+          )}
+          {diag.networkErrorAborted && (
+            <p style={{ fontSize: '9px', color: '#FF9999' }}>aborted: true</p>
+          )}
         </div>
       )}
     </div>
