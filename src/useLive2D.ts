@@ -321,7 +321,7 @@ export function useLive2D() {
         antialias: true,
         powerPreference: 'low-power',
         autoDensity: false,
-        resolution: 2,
+        resolution: 1,
         forceCanvas: false,
       } as any)
 
