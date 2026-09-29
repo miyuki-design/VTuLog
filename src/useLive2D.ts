@@ -12,6 +12,11 @@ export interface Live2DDiagnostics {
   mocFile: string | null
   textureCount: number
   physicsFile: string | null
+  // Path resolution diagnostics
+  model3WebkitPath: string | null   // model3File.webkitRelativePath
+  settingsUrl: string | null        // json.url fed to Cubism4ModelSettings
+  resolvedMocPath: string | null    // settings.resolveURL(settings.moc)
+  allWebkitPaths: string[]          // webkitRelativePath of every selected file
   // NetworkError fields from pixi-live2d-display
   networkErrorUrl?: string
   networkErrorStatus?: number | null
@@ -27,6 +32,10 @@ const EMPTY_DIAG: Live2DDiagnostics = {
   mocFile: null,
   textureCount: 0,
   physicsFile: null,
+  model3WebkitPath: null,
+  settingsUrl: null,
+  resolvedMocPath: null,
+  allWebkitPaths: [],
 }
 
 // ──────────────────────────────────────────────
@@ -60,18 +69,15 @@ async function loadCubismCore(): Promise<void> {
 }
 
 // ──────────────────────────────────────────────
-// Scan files for diagnostics (no blob URL creation)
+// Scan files for initial diagnostics
 // ──────────────────────────────────────────────
 function scanFiles(files: File[]): Live2DDiagnostics {
   const diag: Live2DDiagnostics = { ...EMPTY_DIAG, fileCount: files.length }
-
-  const model3File = files.find(f => f.name.endsWith('.model3.json'))
-  diag.model3Name = model3File?.name ?? null
-
-  diag.mocFile = files.find(f => f.name.endsWith('.moc3'))?.name ?? null
+  diag.model3Name  = files.find(f => f.name.endsWith('.model3.json'))?.name ?? null
+  diag.mocFile     = files.find(f => f.name.endsWith('.moc3'))?.name ?? null
   diag.physicsFile = files.find(f => f.name.endsWith('physics3.json'))?.name ?? null
   diag.textureCount = files.filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f.name)).length
-
+  diag.allWebkitPaths = files.map(f => f.webkitRelativePath || f.name)
   return diag
 }
 
@@ -79,18 +85,15 @@ function scanFiles(files: File[]): Live2DDiagnostics {
 // Parse NetworkError from pixi-live2d-display
 // ──────────────────────────────────────────────
 function parseNetworkError(e: unknown): {
-  message: string
-  url?: string
-  status?: number | null
-  aborted?: boolean
-  stack?: string
+  message: string; url?: string; status?: number | null
+  aborted?: boolean; stack?: string
 } {
   if (!e || typeof e !== 'object') return { message: String(e) }
   const err = e as any
   return {
     message: err.message ?? 'Network error',
     url:     err.url     ?? undefined,
-    status:  typeof err.status  === 'number' ? err.status  : undefined,
+    status:  typeof err.status  === 'number'  ? err.status  : undefined,
     aborted: typeof err.aborted === 'boolean' ? err.aborted : undefined,
     stack:   typeof err.stack   === 'string'  ? err.stack   : undefined,
   }
@@ -100,9 +103,9 @@ function parseNetworkError(e: unknown): {
 // Hook
 // ──────────────────────────────────────────────
 export function useLive2D() {
-  const pixiAppRef          = useRef<any>(null)
-  const pixiCanvasRef       = useRef<HTMLCanvasElement | null>(null)
-  const loadedRef           = useRef(false)
+  const pixiAppRef           = useRef<any>(null)
+  const pixiCanvasRef        = useRef<HTMLCanvasElement | null>(null)
+  const loadedRef            = useRef(false)
   const settingsObjectURLRef = useRef<string | null>(null)
 
   const [status,      setStatus]      = useState<Live2DStatus>('idle')
@@ -130,12 +133,9 @@ export function useLive2D() {
     cleanup()
     setStatus('loading')
 
-    // Show file inventory immediately
     const diag = scanFiles(files)
     setDiagnostics(diag)
-
-    const initialName = diag.model3Name?.replace('.model3.json', '') ?? 'モデル'
-    setModelName(initialName)
+    setModelName(diag.model3Name?.replace('.model3.json', '') ?? 'モデル')
 
     if (!diag.model3Name) {
       setErrorMsg('.model3.json が見つかりません（フォルダごと選択されましたか？）')
@@ -144,12 +144,8 @@ export function useLive2D() {
     }
 
     try {
-      // ── Cubism Core ──
       await loadCubismCore()
 
-      // ── PixiJS v7 ──
-      // pixi-live2d-display 0.4.x peer-deps: pixi.js ^7 (v8 incompatible)
-      // window.PIXI must be set before importing the plugin.
       const PIXI = await import('pixi.js')
       ;(window as any).PIXI = PIXI
       await new Promise<void>(r => setTimeout(r, 0))
@@ -157,15 +153,36 @@ export function useLive2D() {
       const { Live2DModel, Cubism4ModelSettings } = await import('pixi-live2d-display/cubism4')
 
       // ── Build Cubism4ModelSettings manually ──
-      // Bypasses FileLoader's findRuntime() / "Unknown settings JSON" check.
-      // Attach the settings object to the file array so pixi-live2d-display
-      // skips runtime auto-detection and uses Cubism4 directly.
+      // Setting json.url = webkitRelativePath ensures that
+      //   settings.resolveURL("Foo.moc3") → "TopFolder/Foo.moc3"
+      // which matches the webkitRelativePath of the moc3 File object,
+      // allowing FileLoader to find it without blob URL patching.
       const model3File = files.find(f => f.name.endsWith('.model3.json'))!
+
+      // webkitRelativePath includes the top folder, e.g. "Miminoz/Miminoz.model3.json".
+      // Fall back to just the filename if the browser didn't populate it.
+      const model3WebkitPath = model3File.webkitRelativePath || model3File.name
+
       const json: any = JSON.parse(await model3File.text())
-      json.url = model3File.webkitRelativePath || model3File.name
+      json.url = model3WebkitPath
+
       const settings = new (Cubism4ModelSettings as any)(json)
       const settingsObjectURL = URL.createObjectURL(model3File)
       settings._objectURL = settingsObjectURL
+
+      // Resolve moc path for diagnostic comparison
+      const resolvedMocPath: string | null = settings.moc
+        ? (() => { try { return settings.resolveURL(settings.moc) } catch { return null } })()
+        : null
+
+      // Update diagnostics with path resolution info before attempting load
+      const diagWithPaths: Live2DDiagnostics = {
+        ...diag,
+        model3WebkitPath,
+        settingsUrl: settings.url ?? json.url,
+        resolvedMocPath,
+      }
+      setDiagnostics(diagWithPaths)
 
       const canvas = document.createElement('canvas')
       canvas.width  = LIVE2D_CANVAS_SIZE
@@ -189,11 +206,10 @@ export function useLive2D() {
         throw new Error('PixiJS renderer の初期化に失敗しました')
       }
 
-      pixiAppRef.current    = app
-      pixiCanvasRef.current = canvas
+      pixiAppRef.current         = app
+      pixiCanvasRef.current      = canvas
       settingsObjectURLRef.current = settingsObjectURL
 
-      // Attach pre-built settings so FileLoader skips findRuntime()
       const fileArray = Array.from(files) as any
       fileArray.settings = settings
       const model = await (Live2DModel as any).from(fileArray, { autoInteract: false })
@@ -249,14 +265,5 @@ export function useLive2D() {
 
   useEffect(() => () => cleanup(), [cleanup])
 
-  return {
-    loadModel,
-    cleanup,
-    pixiCanvasRef,
-    loadedRef,
-    status,
-    errorMsg,
-    modelName,
-    diagnostics,
-  }
+  return { loadModel, cleanup, pixiCanvasRef, loadedRef, status, errorMsg, modelName, diagnostics }
 }
