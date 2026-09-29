@@ -284,7 +284,7 @@ export default function App() {
     ;(async () => {
       try {
         const s = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } ,frameRate: { ideal: 30, max: 30 },},
           audio: false,
         })
         localStream = s
