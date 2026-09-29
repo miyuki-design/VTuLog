@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
 
-export const LIVE2D_CANVAS_SIZE = 512
+export const LIVE2D_CANVAS_SIZE = 1024
 
 // ──────────────────────────────────────────────
 // Types
