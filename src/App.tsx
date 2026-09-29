@@ -605,7 +605,7 @@ try {
         previewVideoRef.current.src = URL.createObjectURL(blob)
       }
     }
-    mr.start(100)
+    mr.start(1000)
     mediaRecorderRef.current = mr
 
     setRecordingTime(0)
