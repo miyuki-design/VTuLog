@@ -1,0 +1,10 @@
+{
+  "description": "Capture and create engaging Vlogs for Vtubers with simultaneous front and rear camera recording, playback, and editing features for enhanced content creation.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
