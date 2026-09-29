@@ -6,18 +6,26 @@ export const LIVE2D_CANVAS_SIZE = 512
 // Types
 // ──────────────────────────────────────────────
 
+export interface NormalizedFileInfo {
+  name: string
+  originalPath: string   // webkitRelativePath before normalization (may be empty)
+  normalizedPath: string // webkitRelativePath after normalization
+}
+
 export interface Live2DDiagnostics {
   fileCount: number
   model3Name: string | null
   mocFile: string | null
   textureCount: number
   physicsFile: string | null
-  // Path resolution diagnostics
-  model3WebkitPath: string | null   // model3File.webkitRelativePath
-  settingsUrl: string | null        // json.url fed to Cubism4ModelSettings
-  resolvedMocPath: string | null    // settings.resolveURL(settings.moc)
-  allWebkitPaths: string[]          // webkitRelativePath of every selected file
-  // NetworkError fields from pixi-live2d-display
+  // Path resolution
+  settingsUrl: string | null
+  resolvedMocPath: string | null
+  mocNormalizedPath: string | null
+  mocPathMatch: boolean | null
+  // Per-file normalization log
+  normalizedFiles: NormalizedFileInfo[]
+  // NetworkError
   networkErrorUrl?: string
   networkErrorStatus?: number | null
   networkErrorAborted?: boolean
@@ -32,18 +40,18 @@ const EMPTY_DIAG: Live2DDiagnostics = {
   mocFile: null,
   textureCount: 0,
   physicsFile: null,
-  model3WebkitPath: null,
   settingsUrl: null,
   resolvedMocPath: null,
-  allWebkitPaths: [],
+  mocNormalizedPath: null,
+  mocPathMatch: null,
+  normalizedFiles: [],
 }
 
 // ──────────────────────────────────────────────
-// Cubism Core dynamic loader
+// Cubism Core loader
 // ──────────────────────────────────────────────
 async function loadCubismCore(): Promise<void> {
   if ((window as any).Live2DCubismCore) return
-
   const tryScript = (url: string) =>
     new Promise<void>((resolve, reject) => {
       const s = document.createElement('script')
@@ -52,7 +60,6 @@ async function loadCubismCore(): Promise<void> {
       s.onerror = () => { s.remove(); reject() }
       document.head.appendChild(s)
     })
-
   try {
     await tryScript('https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js')
   } catch {
@@ -69,20 +76,90 @@ async function loadCubismCore(): Promise<void> {
 }
 
 // ──────────────────────────────────────────────
-// Scan files for initial diagnostics
+// Clone a File with a forced webkitRelativePath
 // ──────────────────────────────────────────────
-function scanFiles(files: File[]): Live2DDiagnostics {
-  const diag: Live2DDiagnostics = { ...EMPTY_DIAG, fileCount: files.length }
-  diag.model3Name  = files.find(f => f.name.endsWith('.model3.json'))?.name ?? null
-  diag.mocFile     = files.find(f => f.name.endsWith('.moc3'))?.name ?? null
-  diag.physicsFile = files.find(f => f.name.endsWith('physics3.json'))?.name ?? null
-  diag.textureCount = files.filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f.name)).length
-  diag.allWebkitPaths = files.map(f => f.webkitRelativePath || f.name)
-  return diag
+function cloneWithPath(file: File, path: string): File {
+  const clone = new File([file], file.name, {
+    type: file.type,
+    lastModified: file.lastModified,
+  })
+  Object.defineProperty(clone, 'webkitRelativePath', { value: path, writable: false })
+  return clone
 }
 
 // ──────────────────────────────────────────────
-// Parse NetworkError from pixi-live2d-display
+// Collect every referenced relative path from model3.json FileReferences
+// ──────────────────────────────────────────────
+function collectExpectedPaths(fr: any): string[] {
+  const paths: string[] = []
+  const add = (p: unknown) => { if (typeof p === 'string' && p) paths.push(p) }
+
+  add(fr.Moc)
+  add(fr.Physics)
+  add(fr.Pose)
+  add(fr.UserData)
+  if (Array.isArray(fr.Textures))    fr.Textures.forEach(add)
+  if (Array.isArray(fr.Expressions)) fr.Expressions.forEach((e: any) => add(e?.File))
+  if (fr.Motions && typeof fr.Motions === 'object') {
+    for (const group of Object.values(fr.Motions) as any[][]) {
+      if (Array.isArray(group)) group.forEach((m: any) => { add(m?.File); add(m?.Sound) })
+    }
+  }
+  return paths
+}
+
+// ──────────────────────────────────────────────
+// Normalize files:
+//   • model3.json  → webkitRelativePath = model3File.name  (bare filename)
+//   • every other  → webkitRelativePath = the relative path written in model3.json
+// This makes settings.resolveURL(rel) === file.webkitRelativePath for all refs.
+// ──────────────────────────────────────────────
+interface NormalizeResult {
+  normalizedFiles: File[]
+  log: NormalizedFileInfo[]
+}
+
+function normalizeFiles(files: File[], model3File: File, fr: any): NormalizeResult {
+  const expectedPaths = collectExpectedPaths(fr)
+
+  // Build basename → expected path map (first occurrence wins)
+  const basenameToExpected = new Map<string, string>()
+  for (const ep of expectedPaths) {
+    const base = ep.split('/').pop()!
+    if (!basenameToExpected.has(base)) basenameToExpected.set(base, ep)
+  }
+
+  const log: NormalizedFileInfo[] = []
+  const normalizedFiles: File[] = []
+
+  for (const file of files) {
+    const originalPath = file.webkitRelativePath || ''
+
+    if (file === model3File) {
+      // model3.json: bare filename so settings.url = name, resolveURL works from root
+      const np = file.name
+      normalizedFiles.push(cloneWithPath(file, np))
+      log.push({ name: file.name, originalPath, normalizedPath: np })
+      continue
+    }
+
+    const expectedPath = basenameToExpected.get(file.name)
+    if (expectedPath) {
+      normalizedFiles.push(cloneWithPath(file, expectedPath))
+      log.push({ name: file.name, originalPath, normalizedPath: expectedPath })
+    } else {
+      // Not referenced — keep original path or bare name, include anyway
+      const np = originalPath || file.name
+      normalizedFiles.push(cloneWithPath(file, np))
+      log.push({ name: file.name, originalPath, normalizedPath: np })
+    }
+  }
+
+  return { normalizedFiles, log }
+}
+
+// ──────────────────────────────────────────────
+// NetworkError decoder
 // ──────────────────────────────────────────────
 function parseNetworkError(e: unknown): {
   message: string; url?: string; status?: number | null
@@ -133,17 +210,45 @@ export function useLive2D() {
     cleanup()
     setStatus('loading')
 
-    const diag = scanFiles(files)
-    setDiagnostics(diag)
-    setModelName(diag.model3Name?.replace('.model3.json', '') ?? 'モデル')
+    // Initial quick scan
+    const model3File = files.find(f => f.name.endsWith('.model3.json')) ?? null
+    const initialDiag: Live2DDiagnostics = {
+      ...EMPTY_DIAG,
+      fileCount:    files.length,
+      model3Name:   model3File?.name ?? null,
+      mocFile:      files.find(f => f.name.endsWith('.moc3'))?.name ?? null,
+      textureCount: files.filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f.name)).length,
+      physicsFile:  files.find(f => f.name.endsWith('physics3.json'))?.name ?? null,
+    }
+    setDiagnostics(initialDiag)
+    setModelName(initialDiag.model3Name?.replace('.model3.json', '') ?? 'モデル')
 
-    if (!diag.model3Name) {
+    if (!model3File) {
       setErrorMsg('.model3.json が見つかりません（フォルダごと選択されましたか？）')
       setStatus('error')
       return
     }
 
     try {
+      // ── Parse model3.json ──
+      let json: any
+      try {
+        json = JSON.parse(await model3File.text())
+      } catch {
+        throw new Error(`${model3File.name} の JSON 解析に失敗しました`)
+      }
+      const fr: any = json.FileReferences ?? {}
+
+      // ── Normalize all files ──
+      // iPhone Safari may have empty webkitRelativePath; clone each file with
+      // the path that model3.json expects so FileLoader's validateFiles() finds them.
+      const { normalizedFiles, log } = normalizeFiles(files, model3File, fr)
+
+      // ── Build Cubism4ModelSettings ──
+      // json.url = model3File.name (bare) so resolveURL("Foo.moc3") === "Foo.moc3",
+      // which now matches the normalised webkitRelativePath of the moc3 clone.
+      json.url = model3File.name
+
       await loadCubismCore()
 
       const PIXI = await import('pixi.js')
@@ -152,38 +257,39 @@ export function useLive2D() {
 
       const { Live2DModel, Cubism4ModelSettings } = await import('pixi-live2d-display/cubism4')
 
-      // ── Build Cubism4ModelSettings manually ──
-      // Setting json.url = webkitRelativePath ensures that
-      //   settings.resolveURL("Foo.moc3") → "TopFolder/Foo.moc3"
-      // which matches the webkitRelativePath of the moc3 File object,
-      // allowing FileLoader to find it without blob URL patching.
-      const model3File = files.find(f => f.name.endsWith('.model3.json'))!
-
-      // webkitRelativePath includes the top folder, e.g. "Miminoz/Miminoz.model3.json".
-      // Fall back to just the filename if the browser didn't populate it.
-      const model3WebkitPath = model3File.webkitRelativePath || model3File.name
-
-      const json: any = JSON.parse(await model3File.text())
-      json.url = model3WebkitPath
-
       const settings = new (Cubism4ModelSettings as any)(json)
       const settingsObjectURL = URL.createObjectURL(model3File)
       settings._objectURL = settingsObjectURL
 
-      // Resolve moc path for diagnostic comparison
+      // Resolved path for moc — must equal the normalised webkitRelativePath
       const resolvedMocPath: string | null = settings.moc
         ? (() => { try { return settings.resolveURL(settings.moc) } catch { return null } })()
         : null
 
-      // Update diagnostics with path resolution info before attempting load
-      const diagWithPaths: Live2DDiagnostics = {
-        ...diag,
-        model3WebkitPath,
-        settingsUrl: settings.url ?? json.url,
-        resolvedMocPath,
-      }
-      setDiagnostics(diagWithPaths)
+      const mocClone = normalizedFiles.find(f => f.name.endsWith('.moc3'))
+      const mocNormalizedPath = mocClone?.webkitRelativePath ?? null
+      const mocPathMatch = resolvedMocPath !== null && mocNormalizedPath !== null
+        ? resolvedMocPath === mocNormalizedPath
+        : null
 
+      // Update diagnostics with normalization info
+      setDiagnostics({
+        ...initialDiag,
+        settingsUrl:       settings.url ?? json.url,
+        resolvedMocPath,
+        mocNormalizedPath,
+        mocPathMatch,
+        normalizedFiles:   log,
+      })
+
+      // Guard: warn if paths don't match — load will fail
+      if (mocPathMatch === false) {
+        throw new Error(
+          `パス不一致: resolveURL(moc) = "${resolvedMocPath}" ≠ webkitRelativePath = "${mocNormalizedPath}"`
+        )
+      }
+
+      // ── PixiJS v7 Application ──
       const canvas = document.createElement('canvas')
       canvas.width  = LIVE2D_CANVAS_SIZE
       canvas.height = LIVE2D_CANVAS_SIZE
@@ -210,7 +316,7 @@ export function useLive2D() {
       pixiCanvasRef.current      = canvas
       settingsObjectURLRef.current = settingsObjectURL
 
-      const fileArray = Array.from(files) as any
+      const fileArray = normalizedFiles as any
       fileArray.settings = settings
       const model = await (Live2DModel as any).from(fileArray, { autoInteract: false })
       app.stage.addChild(model)
@@ -234,7 +340,6 @@ export function useLive2D() {
 
     } catch (e) {
       const ne = parseNetworkError(e)
-
       let msg = ne.message
       if (ne.url)            msg += `\nURL: ${ne.url}`
       if (ne.status != null) msg += `\nHTTP status: ${ne.status}`
