@@ -256,6 +256,7 @@ export default function App() {
   const audioStreamRef = useRef<MediaStream | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
   const recordedBlobRef = useRef<Blob | null>(null)
+  const recordedMimeTypeRef = useRef('video/webm')
   const previewVideoRef = useRef<HTMLVideoElement>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const playbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -545,17 +546,40 @@ export default function App() {
     const tracks = [...canvasStream.getVideoTracks(), ...(audioStream?.getAudioTracks() ?? [])]
     const combined = new MediaStream(tracks)
 
-    const mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', ''].find(
-      t => t === '' || MediaRecorder.isTypeSupported(t)
-    ) ?? ''
+    const mimeCandidates = [
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4',
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm',
+    ]
 
-    const mr = new MediaRecorder(combined, mimeType ? { mimeType } : {})
-    mr.ondataavailable = ev => { if (ev.data.size > 0) recordedChunksRef.current.push(ev.data) }
+    const mimeType = mimeCandidates.find(type => MediaRecorder.isTypeSupported(type)) ?? ''
+
+    let mr: MediaRecorder
+    try {
+      mr = mimeType
+        ? new MediaRecorder(combined, { mimeType })
+        : new MediaRecorder(combined)
+    } catch {
+      // Fallback to the browser's default recording format.
+      mr = new MediaRecorder(combined)
+    }
+
+    const actualMimeType = mr.mimeType || mimeType || 'video/webm'
+    recordedMimeTypeRef.current = actualMimeType
+
+    mr.ondataavailable = ev => {
+      if (ev.data.size > 0) recordedChunksRef.current.push(ev.data)
+    }
+
     mr.onstop = () => {
       audioStreamRef.current?.getTracks().forEach(t => t.stop())
       audioStreamRef.current = null
-      const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
+
+      const blob = new Blob(recordedChunksRef.current, { type: actualMimeType })
       recordedBlobRef.current = blob
+
       if (previewVideoRef.current) {
         previewVideoRef.current.src = URL.createObjectURL(blob)
       }
@@ -623,7 +647,9 @@ export default function App() {
     if (blob) {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      a.href = url; a.download = `VTuLog_${Date.now()}.webm`
+      const ext = recordedMimeTypeRef.current.includes('mp4') ? 'mp4' : 'webm'
+      a.href = url
+      a.download = `VTuLog_${Date.now()}.${ext}`
       a.click()
       setTimeout(() => URL.revokeObjectURL(url), 2000)
     }
