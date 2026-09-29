@@ -264,29 +264,29 @@ export function useLive2D() {
       // Step 2: Load Cubism Core
       await loadCubismCore()
 
-      // Step 3: Dynamic import after core is available
-      // pixi-live2d-display 0.4.x requires PixiJS v7 — window.PIXI must be set
-      // BEFORE importing pixi-live2d-display so it can reference the correct
-      // renderer/ticker internals at module evaluation time.
+      // Step 3: PixiJS v7 — window.PIXI must be set BEFORE importing
+      // pixi-live2d-display so the plugin captures the correct ticker/renderer.
+      // (pixi-live2d-display 0.4.x peer-deps: pixi.js ^7; v8 is incompatible.)
       const PIXI = await import('pixi.js')
       ;(window as any).PIXI = PIXI
 
-      // Flush the microtask queue so any PIXI internals that read window.PIXI
-      // during their own async init have a chance to settle before we load the
-      // Live2D module.
+      // One macrotask gap: lets any PIXI global listeners settle before the
+      // Live2D module evaluates and hooks into window.PIXI.
       await new Promise<void>(r => setTimeout(r, 0))
 
       const { Live2DModel } = await import('pixi-live2d-display/cubism4')
 
-      // Step 4: Create a PixiJS v7 Application on an explicit <canvas>.
-      // Using an explicit canvas avoids the autoDetectRenderer path that can
-      // fire before the document is fully ready on some mobile browsers.
+      // Step 4: PixiJS v7 Application — constructor is synchronous.
+      // Pass an explicit canvas so we own the element lifecycle; avoids a
+      // Safari race in autoDetectRenderer.  Force WebGL (not WebGPU) via
+      // forceCanvas: false + preference: 'webgl' so iPhone Safari uses a path
+      // that pixi-live2d-display's renderer access pattern supports.
       const canvas = document.createElement('canvas')
-      canvas.width = LIVE2D_CANVAS_SIZE
+      canvas.width  = LIVE2D_CANVAS_SIZE
       canvas.height = LIVE2D_CANVAS_SIZE
 
       const app = new PIXI.Application({
-        view: canvas,
+        view: canvas,           // v7 API — NOT app.canvas (that's v8)
         width: LIVE2D_CANVAS_SIZE,
         height: LIVE2D_CANVAS_SIZE,
         backgroundAlpha: 0,
@@ -295,21 +295,23 @@ export function useLive2D() {
         powerPreference: 'low-power',
         autoDensity: false,
         resolution: 1,
-      })
+        forceCanvas: false,     // prefer WebGL over software canvas
+      } as any)
 
-      // Verify the renderer is ready before touching Live2D
-      if (!app.renderer || !(app.renderer as any).canvas) {
+      // Guard: renderer must be initialised before Live2D touches it.
+      // In v7, the canvas surface is app.view (an ICanvas / HTMLCanvasElement).
+      if (!app.renderer || !app.view) {
         throw new Error('PixiJS renderer の初期化に失敗しました')
       }
 
-      pixiAppRef.current = app
-      pixiCanvasRef.current = canvas
+      pixiAppRef.current  = app
+      pixiCanvasRef.current = canvas  // same object as app.view
 
-      // Step 5: Load the model — now that app.renderer.canvas exists
+      // Step 5: Load model after renderer is confirmed ready.
       const model = await (Live2DModel as any).from(model3Url, { autoInteract: false })
       app.stage.addChild(model)
 
-      // Wait one tick for the model to lay out before reading width/height
+      // One rAF so the model lays out and reports real dimensions.
       await new Promise<void>(r => requestAnimationFrame(() => r()))
 
       const mw = model.width  || LIVE2D_CANVAS_SIZE
