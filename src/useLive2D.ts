@@ -7,10 +7,11 @@ export const LIVE2D_CANVAS_SIZE = 512
 // ──────────────────────────────────────────────
 
 export interface FetchProbe {
-  label: string   // "model3.json" / "moc3" / "texture[0]" etc.
-  url: string     // blob: URL (first 60 chars shown in UI)
+  label: string
+  url: string
   ok: boolean
-  status: number | null  // null = fetch threw (no HTTP response)
+  status: number | null    // null = fetch threw before getting a response
+  contentType: string | null
   error?: string
 }
 
@@ -24,12 +25,19 @@ export interface Live2DDiagnostics {
   physicsFile: string | null
   physicsResolved: boolean
   unresolvedPaths: string[]
-  // preflight fetch results (populated just before Live2DModel.from)
+  // Preflight fetch results (set just before Live2DModel.from)
   fetchProbes: FetchProbe[]
+  // Snippet of patched model3.json FileReferences for manual verification
+  patchedRefs: {
+    Moc?: string
+    Textures?: string[]
+    Physics?: string
+  } | null
   // NetworkError fields from pixi-live2d-display
   networkErrorUrl?: string
   networkErrorStatus?: number | null
   networkErrorAborted?: boolean
+  networkErrorStack?: string
 }
 
 export type Live2DStatus = 'idle' | 'loading' | 'loaded' | 'error'
@@ -42,6 +50,7 @@ const EMPTY_DIAG: Live2DDiagnostics = {
   physicsFile: null, physicsResolved: false,
   unresolvedPaths: [],
   fetchProbes: [],
+  patchedRefs: null,
 }
 
 // ──────────────────────────────────────────────
@@ -79,7 +88,6 @@ async function loadCubismCore(): Promise<void> {
 // ──────────────────────────────────────────────
 function buildFileMap(files: File[], model3File: File): Map<string, File> {
   const map = new Map<string, File>()
-
   const model3Dir = model3File.webkitRelativePath
     ? model3File.webkitRelativePath.split('/').slice(0, -1).join('/') + '/'
     : ''
@@ -93,7 +101,6 @@ function buildFileMap(files: File[], model3File: File): Map<string, File> {
     }
     if (!map.has(f.name)) map.set(f.name, f)
   }
-
   return map
 }
 
@@ -117,15 +124,15 @@ function makeResolver(fileMap: Map<string, File>, blobUrls: Map<File, string>) {
 }
 
 // ──────────────────────────────────────────────
-// Model preparation
+// Model preparation — returns patched model3 + tracking URLs
 // ──────────────────────────────────────────────
 interface PrepareResult {
   model3Url: string
-  mocBlobUrl: string | null
-  textureBlobUrls: string[]
-  physicsBlobUrl: string | null
+  // individual blob URLs for preflight, keyed by human label
+  probeTargets: Array<{ label: string; url: string }>
   allBlobUrls: string[]
   diagnostics: Live2DDiagnostics
+  patchedModel3: any  // the patched JSON object for ref-snippet display
 }
 
 async function prepareModel(files: File[]): Promise<PrepareResult> {
@@ -147,10 +154,8 @@ async function prepareModel(files: File[]): Promise<PrepareResult> {
   }
   const fr: any = model3.FileReferences ?? {}
 
-  // Track individual blob URLs for preflight
-  let mocBlobUrl: string | null = null
-  const textureBlobUrls: string[] = []
-  let physicsBlobUrl: string | null = null
+  // Track each category of blob URL for preflight
+  const probeTargets: Array<{ label: string; url: string }> = []
 
   // ── Moc ──
   if (fr.Moc) {
@@ -158,7 +163,7 @@ async function prepareModel(files: File[]): Promise<PrepareResult> {
     const r = resolve(fr.Moc)
     fr.Moc = r.url
     diag.mocResolved = r.resolved
-    if (r.resolved) mocBlobUrl = r.url
+    if (r.resolved) probeTargets.push({ label: fr.Moc.split('/').pop() ?? 'moc3', url: r.url })
     else diag.unresolvedPaths.push(diag.mocFile!)
   }
 
@@ -167,8 +172,12 @@ async function prepareModel(files: File[]): Promise<PrepareResult> {
     diag.textureCount = fr.Textures.length
     fr.Textures = fr.Textures.map((t: string, i: number) => {
       const r = resolve(t)
-      if (r.resolved) { diag.texturesResolved++; textureBlobUrls.push(r.url) }
-      else diag.unresolvedPaths.push(t)
+      if (r.resolved) {
+        diag.texturesResolved++
+        probeTargets.push({ label: `texture[${i}] ${t.split('/').pop()}`, url: r.url })
+      } else {
+        diag.unresolvedPaths.push(t)
+      }
       return r.url
     })
   }
@@ -179,8 +188,40 @@ async function prepareModel(files: File[]): Promise<PrepareResult> {
     const r = resolve(fr.Physics)
     fr.Physics = r.url
     diag.physicsResolved = r.resolved
-    if (r.resolved) physicsBlobUrl = r.url
+    if (r.resolved) probeTargets.push({ label: fr.Physics.split('/').pop() ?? 'physics3.json', url: r.url })
     else diag.unresolvedPaths.push(diag.physicsFile!)
+  }
+
+  // ── Expressions ──
+  if (Array.isArray(fr.Expressions)) {
+    fr.Expressions = fr.Expressions.map((e: any, i: number) => {
+      if (!e.File) return e
+      const r = resolve(e.File)
+      if (r.resolved) probeTargets.push({ label: `expression[${i}] ${e.File.split('/').pop()}`, url: r.url })
+      else diag.unresolvedPaths.push(e.File)
+      return { ...e, File: r.url }
+    })
+  }
+
+  // ── Motions ──
+  if (fr.Motions && typeof fr.Motions === 'object') {
+    let motionIdx = 0
+    for (const group of Object.values(fr.Motions) as any[][]) {
+      if (!Array.isArray(group)) continue
+      for (const m of group) {
+        if (m.File) {
+          const r = resolve(m.File)
+          if (r.resolved) probeTargets.push({ label: `motion[${motionIdx}] ${m.File.split('/').pop()}`, url: r.url })
+          else diag.unresolvedPaths.push(m.File)
+          m.File = r.url
+          motionIdx++
+        }
+        if (m.Sound) {
+          const r = resolve(m.Sound)
+          m.Sound = r.url
+        }
+      }
+    }
   }
 
   // ── Other optional refs ──
@@ -192,76 +233,48 @@ async function prepareModel(files: File[]): Promise<PrepareResult> {
   }
   if (fr.Pose) fr.Pose = resolveOpt(fr.Pose)
   if (fr.UserData) fr.UserData = resolveOpt(fr.UserData)
-  if (Array.isArray(fr.Expressions)) {
-    fr.Expressions = fr.Expressions.map((e: any) => ({ ...e, File: resolveOpt(e.File ?? '') }))
-  }
-  if (fr.Motions && typeof fr.Motions === 'object') {
-    for (const group of Object.values(fr.Motions) as any[][]) {
-      if (!Array.isArray(group)) continue
-      for (const m of group) {
-        if (m.File) m.File = resolveOpt(m.File)
-        if (m.Sound) m.Sound = resolveOpt(m.Sound)
-      }
-    }
-  }
 
+  // ── Patched model3.json → blob URL ──
   const patchedBlob = new Blob([JSON.stringify(model3)], { type: 'application/json' })
   const model3Url = URL.createObjectURL(patchedBlob)
 
+  // Prepend model3 itself to probe list
+  probeTargets.unshift({ label: diag.model3Name!, url: model3Url })
+
   return {
     model3Url,
-    mocBlobUrl,
-    textureBlobUrls,
-    physicsBlobUrl,
+    probeTargets,
     allBlobUrls: [model3Url, ...blobUrls.values()],
     diagnostics: diag,
+    patchedModel3: model3,
   }
 }
 
 // ──────────────────────────────────────────────
-// Preflight: fetch each blob URL and record result
+// Preflight: fetch every blob URL and record details
 // ──────────────────────────────────────────────
-async function runPreflight(params: {
-  model3Url: string
-  mocBlobUrl: string | null
-  textureBlobUrls: string[]
-  physicsBlobUrl: string | null
-  mocFile: string | null
-  physicsFile: string | null
-}): Promise<FetchProbe[]> {
-  const probes: Array<{ label: string; url: string }> = [
-    { label: 'model3.json (patched)', url: params.model3Url },
-  ]
-  if (params.mocBlobUrl)
-    probes.push({ label: params.mocFile ?? 'moc3', url: params.mocBlobUrl })
-  params.textureBlobUrls.forEach((u, i) =>
-    probes.push({ label: `texture[${i}]`, url: u })
-  )
-  if (params.physicsBlobUrl)
-    probes.push({ label: params.physicsFile ?? 'physics3.json', url: params.physicsBlobUrl })
-
-  const results: FetchProbe[] = []
-
-  await Promise.all(probes.map(async ({ label, url }) => {
+async function runPreflight(probeTargets: Array<{ label: string; url: string }>): Promise<FetchProbe[]> {
+  const results = await Promise.all(probeTargets.map(async ({ label, url }) => {
     let ok = false
     let status: number | null = null
+    let contentType: string | null = null
     let error: string | undefined
 
     try {
       const res = await fetch(url)
       ok = res.ok
       status = res.status
-      // Drain to avoid memory leak on large textures
+      contentType = res.headers.get('content-type')
+      // Drain body to avoid memory leak
       await res.arrayBuffer().catch(() => {})
     } catch (e) {
       error = (e as Error).message
     }
 
-    results.push({ label, url, ok, status, error })
+    return { label, url, ok, status, contentType, error } satisfies FetchProbe
   }))
 
-  // Keep same order as probes
-  return probes.map(p => results.find(r => r.url === p.url)!)
+  return results
 }
 
 // ──────────────────────────────────────────────
@@ -272,14 +285,16 @@ function parseNetworkError(e: unknown): {
   url?: string
   status?: number | null
   aborted?: boolean
+  stack?: string
 } {
   if (!e || typeof e !== 'object') return { message: String(e) }
   const err = e as any
   return {
     message: err.message ?? 'Network error',
-    url: err.url ?? undefined,
-    status: typeof err.status === 'number' ? err.status : undefined,
+    url:     err.url     ?? undefined,
+    status:  typeof err.status  === 'number' ? err.status  : undefined,
     aborted: typeof err.aborted === 'boolean' ? err.aborted : undefined,
+    stack:   typeof err.stack   === 'string'  ? err.stack   : undefined,
   }
 }
 
@@ -287,9 +302,9 @@ function parseNetworkError(e: unknown): {
 // Hook
 // ──────────────────────────────────────────────
 export function useLive2D() {
-  const pixiAppRef    = useRef<any>(null)
-  const pixiCanvasRef = useRef<HTMLCanvasElement | null>(null)
-  const loadedRef     = useRef(false)
+  const pixiAppRef     = useRef<any>(null)
+  const pixiCanvasRef  = useRef<HTMLCanvasElement | null>(null)
+  const loadedRef      = useRef(false)
   const allBlobUrlsRef = useRef<string[]>([])
 
   const [status,      setStatus]      = useState<Live2DStatus>('idle')
@@ -327,22 +342,24 @@ export function useLive2D() {
     try {
       // ── Step 1: Resolve all paths to blob URLs ──
       const {
-        model3Url, mocBlobUrl, textureBlobUrls, physicsBlobUrl,
-        allBlobUrls, diagnostics: diag,
+        model3Url, probeTargets, allBlobUrls,
+        diagnostics: diag, patchedModel3,
       } = await prepareModel(files)
       allBlobUrlsRef.current = allBlobUrls
+
+      // Record FileReferences snippet for manual verification
+      const fr = patchedModel3.FileReferences ?? {}
+      diag.patchedRefs = {
+        Moc:      fr.Moc,
+        Textures: Array.isArray(fr.Textures) ? fr.Textures : undefined,
+        Physics:  fr.Physics,
+      }
       setDiagnostics({ ...diag })
 
-      // ── Step 2: Preflight — fetch every blob URL before handing to Live2D ──
-      const probes = await runPreflight({
-        model3Url,
-        mocBlobUrl,
-        textureBlobUrls,
-        physicsBlobUrl,
-        mocFile: diag.mocFile,
-        physicsFile: diag.physicsFile,
-      })
-      setDiagnostics(prev => ({ ...(prev ?? diag), fetchProbes: probes }))
+      // ── Step 2: Preflight — fetch every blob URL ──
+      const probes = await runPreflight(probeTargets)
+      const diagWithProbes = { ...diag, fetchProbes: probes }
+      setDiagnostics(diagWithProbes)
 
       const failedProbes = probes.filter(p => !p.ok)
       if (failedProbes.length > 0) {
@@ -355,12 +372,10 @@ export function useLive2D() {
       // ── Step 3: Load Cubism Core ──
       await loadCubismCore()
 
-      // ── Step 4: PixiJS v7 setup ──
-      // pixi-live2d-display 0.4.x requires pixi.js ^7 (v8 is incompatible).
-      // window.PIXI must be set before importing the plugin.
+      // ── Step 4: PixiJS v7 — must set window.PIXI before pixi-live2d-display import ──
       const PIXI = await import('pixi.js')
       ;(window as any).PIXI = PIXI
-      await new Promise<void>(r => setTimeout(r, 0))  // let PIXI hooks settle
+      await new Promise<void>(r => setTimeout(r, 0))
 
       const { Live2DModel } = await import('pixi-live2d-display/cubism4')
 
@@ -369,7 +384,7 @@ export function useLive2D() {
       canvas.height = LIVE2D_CANVAS_SIZE
 
       const app = new PIXI.Application({
-        view: canvas,           // v7: app.view — NOT app.canvas (v8)
+        view: canvas,
         width: LIVE2D_CANVAS_SIZE,
         height: LIVE2D_CANVAS_SIZE,
         backgroundAlpha: 0,
@@ -378,7 +393,7 @@ export function useLive2D() {
         powerPreference: 'low-power',
         autoDensity: false,
         resolution: 1,
-        forceCanvas: false,     // WebGL preferred; avoids WebGPU on Safari
+        forceCanvas: false,
       } as any)
 
       if (!app.renderer || !app.view) {
@@ -410,14 +425,12 @@ export function useLive2D() {
       setStatus('loaded')
 
     } catch (e) {
-      // pixi-live2d-display throws NetworkError objects with .url / .status / .aborted
       const ne = parseNetworkError(e)
 
-      // Build a human-readable error string including NetworkError fields
       let msg = ne.message
-      if (ne.url)    msg += `\nURL: ${ne.url}`
+      if (ne.url)            msg += `\nURL: ${ne.url}`
       if (ne.status != null) msg += `\nHTTP status: ${ne.status}`
-      if (ne.aborted) msg += '\n(aborted)'
+      if (ne.aborted)        msg += '\n(aborted)'
 
       setErrorMsg(msg)
       setDiagnostics(prev => prev ? {
@@ -425,6 +438,7 @@ export function useLive2D() {
         networkErrorUrl:     ne.url,
         networkErrorStatus:  ne.status,
         networkErrorAborted: ne.aborted,
+        networkErrorStack:   ne.stack,
       } : null)
       setStatus('error')
 
