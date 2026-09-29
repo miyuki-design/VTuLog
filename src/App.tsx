@@ -116,18 +116,26 @@ function Live2DDiagPanel({
           <div style={{ marginTop: '8px', padding: '6px 8px', borderRadius: '7px', background: 'rgba(0,229,255,0.04)', border: '1px solid rgba(0,229,255,0.12)' }}>
             <p style={{ fontSize: '9px', color: CYAN, marginBottom: '4px', fontFamily: 'var(--font-display)', letterSpacing: '0.05em' }}>パス解決</p>
             {diag.settingsUrl && (
-              <p style={{ ...MONO, color: MUTED }}><span style={{ color: '#5A527A' }}>settings.url: </span>{diag.settingsUrl}</p>
+              <p style={{ ...MONO, color: MUTED }}><span style={{ color: '#5A527A' }}>settings.url:      </span>{diag.settingsUrl}</p>
             )}
+            {/* raw paths */}
             {diag.resolvedMocPath && (
-              <p style={{ ...MONO, color: diag.mocPathMatch === false ? RED : CYAN }}>
-                <span style={{ color: '#5A527A' }}>resolveURL(moc): </span>{diag.resolvedMocPath}
-              </p>
+              <p style={{ ...MONO, color: MUTED }}><span style={{ color: '#5A527A' }}>resolveURL(raw):   </span>{diag.resolvedMocPath}</p>
             )}
             {diag.mocNormalizedPath && (
+              <p style={{ ...MONO, color: MUTED }}><span style={{ color: '#5A527A' }}>webkit(raw):       </span>{diag.mocNormalizedPath}</p>
+            )}
+            {/* encoded comparison — this is what FileLoader actually compares */}
+            {diag.encodedMocPath && (
               <p style={{ ...MONO, color: diag.mocPathMatch === false ? RED : CYAN }}>
-                <span style={{ color: '#5A527A' }}>webkit(正規化後): </span>{diag.mocNormalizedPath}
+                <span style={{ color: '#5A527A' }}>resolveURL(enc):   </span>{diag.encodedMocPath}
+              </p>
+            )}
+            {diag.encodedMocWebkit && (
+              <p style={{ ...MONO, color: diag.mocPathMatch === false ? RED : CYAN }}>
+                <span style={{ color: '#5A527A' }}>webkit(enc):       </span>{diag.encodedMocWebkit}
                 {diag.mocPathMatch !== null && (
-                  <span style={{ marginLeft: '6px', color: diag.mocPathMatch ? CYAN : RED }}>
+                  <span style={{ marginLeft: '6px', color: diag.mocPathMatch ? CYAN : RED, fontFamily: 'var(--font-display)' }}>
                     {diag.mocPathMatch ? '✓ 一致' : '✗ 不一致'}
                   </span>
                 )}
