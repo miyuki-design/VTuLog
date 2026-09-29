@@ -1,108 +1,851 @@
+import { useState, useEffect, useRef, useCallback } from 'react'
+
+type AppState = 'idle' | 'recording' | 'preview' | 'playing'
+
+const PRESET_AVATARS = [
+  { id: 'hana', name: 'ハナ', color: '#FF3FA4', hair: '#FF8BC8', eye: '#00E5FF' },
+  { id: 'luna', name: 'ルナ', color: '#7B2FFF', hair: '#C9A0FF', eye: '#FFD700' },
+  { id: 'sora', name: 'ソラ', color: '#00BFFF', hair: '#80DFFF', eye: '#FF69B4' },
+]
+
+function AvatarFace({ avatar, size = 80, animated = true }: {
+  avatar: typeof PRESET_AVATARS[0]; size?: number; animated?: boolean
+}) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100"
+      className={animated ? 'animate-float-avatar' : ''}
+      style={{ filter: `drop-shadow(0 0 8px ${avatar.color}88)` }}>
+      <ellipse cx="50" cy="54" rx="30" ry="32" fill="#FFE0C8" />
+      <ellipse cx="50" cy="42" rx="32" ry="28" fill={avatar.hair} />
+      <path d="M20 42 Q22 18 50 16 Q78 18 80 42 Q70 30 50 28 Q30 30 20 42Z" fill={avatar.hair} />
+      <ellipse cx="50" cy="56" rx="26" ry="28" fill="#FFE8D6" />
+      <ellipse cx="40" cy="52" rx="6" ry="7" fill="white" />
+      <ellipse cx="60" cy="52" rx="6" ry="7" fill="white" />
+      <ellipse cx="40" cy="53" rx="4" ry="5" fill={avatar.eye} />
+      <ellipse cx="60" cy="53" rx="4" ry="5" fill={avatar.eye} />
+      <ellipse cx="41" cy="51" rx="1.5" ry="1.5" fill="white" />
+      <ellipse cx="61" cy="51" rx="1.5" ry="1.5" fill="white" />
+      <ellipse cx="34" cy="60" rx="5" ry="3" fill="#FFB3C8" opacity="0.6" />
+      <ellipse cx="66" cy="60" rx="5" ry="3" fill="#FFB3C8" opacity="0.6" />
+      <path d="M43 66 Q50 72 57 66" stroke="#E8968A" strokeWidth="2" fill="none" strokeLinecap="round" />
+      <ellipse cx="22" cy="56" rx="5" ry="6" fill="#FFE0C8" />
+      <ellipse cx="78" cy="56" rx="5" ry="6" fill="#FFE0C8" />
+    </svg>
+  )
+}
+
+function buildPresetSVG(av: typeof PRESET_AVATARS[0]) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 100 100">
+    <ellipse cx="50" cy="54" rx="30" ry="32" fill="#FFE0C8"/>
+    <ellipse cx="50" cy="42" rx="32" ry="28" fill="${av.hair}"/>
+    <path d="M20 42 Q22 18 50 16 Q78 18 80 42 Q70 30 50 28 Q30 30 20 42Z" fill="${av.hair}"/>
+    <ellipse cx="50" cy="56" rx="26" ry="28" fill="#FFE8D6"/>
+    <ellipse cx="40" cy="52" rx="6" ry="7" fill="white"/>
+    <ellipse cx="60" cy="52" rx="6" ry="7" fill="white"/>
+    <ellipse cx="40" cy="53" rx="4" ry="5" fill="${av.eye}"/>
+    <ellipse cx="60" cy="53" rx="4" ry="5" fill="${av.eye}"/>
+    <ellipse cx="41" cy="51" rx="1.5" ry="1.5" fill="white"/>
+    <ellipse cx="61" cy="51" rx="1.5" ry="1.5" fill="white"/>
+    <ellipse cx="34" cy="60" rx="5" ry="3" fill="#FFB3C8" opacity="0.6"/>
+    <ellipse cx="66" cy="60" rx="5" ry="3" fill="#FFB3C8" opacity="0.6"/>
+    <path d="M43 66 Q50 72 57 66" stroke="#E8968A" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <ellipse cx="22" cy="56" rx="5" ry="6" fill="#FFE0C8"/>
+    <ellipse cx="78" cy="56" rx="5" ry="6" fill="#FFE0C8"/>
+  </svg>`
+}
+
+function formatTime(s: number) {
+  return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`
+}
+
+function getTouchDist(t1: Touch, t2: Touch) {
+  return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY)
+}
+
+// Internal canvas resolution (portrait 9:16)
+const CW = 720
+const CH = 1280
+
 export default function App() {
-  const sizes = [512, 180, 120, 60, 32]
+  // ── Camera ──
+  const hiddenVideoRef = useRef<HTMLVideoElement>(null)
+  const cameraStreamRef = useRef<MediaStream | null>(null)
+  const [cameraReady, setCameraReady] = useState(false)
+  const [cameraError, setCameraError] = useState<string | null>(null)
+
+  // ── Canvas ──
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const rafRef = useRef<number>(0)
+
+  // ── Avatar ──
+  const [customAvatarUrl, setCustomAvatarUrl] = useState<string | null>(null)
+  const avatarImgRef = useRef<HTMLImageElement | null>(null)
+  const presetSvgImgRef = useRef<HTMLImageElement | null>(null)
+  const useCustomRef = useRef(false)
+  const [useCustom, setUseCustom] = useState(false)
+  const [selectedPreset, setSelectedPreset] = useState(0)
+  const [avatarName, setAvatarName] = useState('マイVTuber')
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false)
+  const [showNameInput, setShowNameInput] = useState(false)
+
+  // ── Avatar transform (refs for draw loop, state for UI) ──
+  const vtPosRef = useRef({ x: CW - 220, y: CH - 300 })
+  const vtScaleRef = useRef(1)
+  const [vtScale, setVtScale] = useState(1)
+
+  // ── Drag ──
+  const isDraggingRef = useRef(false)
+  const dragOffsetRef = useRef({ x: 0, y: 0 })
+
+  // ── Pinch ──
+  const pinchStartDistRef = useRef(0)
+  const pinchStartScaleRef = useRef(1)
+  const pinchCenterRef = useRef({ x: 0, y: 0 })
+  const pinchStartPosRef = useRef({ x: 0, y: 0 })
+
+  // ── Recording ──
+  const [appState, setAppState] = useState<AppState>('idle')
+  const [recordingTime, setRecordingTime] = useState(0)
+  const [playbackTime, setPlaybackTime] = useState(0)
+  const [playbackDuration, setPlaybackDuration] = useState(0)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioStreamRef = useRef<MediaStream | null>(null)
+  const recordedChunksRef = useRef<Blob[]>([])
+  const recordedBlobRef = useRef<Blob | null>(null)
+  const previewVideoRef = useRef<HTMLVideoElement>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const playbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // ── UI ──
+  const [showSaved, setShowSaved] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [micError, setMicError] = useState<string | null>(null)
+
+  const isCapturing = appState === 'idle' || appState === 'recording'
+  const isPreviewMode = appState === 'preview' || appState === 'playing'
+  const presetAvatar = PRESET_AVATARS[selectedPreset]
+  const displayAvatarName = useCustom ? avatarName : presetAvatar.name
+  const displayAvatarColor = useCustom ? '#FF3FA4' : presetAvatar.color
+
+  // ── Camera init ──
+  useEffect(() => {
+    let localStream: MediaStream | null = null
+    ;(async () => {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false,
+        })
+        localStream = s
+        cameraStreamRef.current = s
+        const v = hiddenVideoRef.current!
+        v.srcObject = s
+        v.onloadedmetadata = () => { v.play(); setCameraReady(true) }
+      } catch (e) {
+        setCameraError((e as Error).name === 'NotAllowedError' ? 'カメラへのアクセスが拒否されました' : 'カメラを起動できませんでした')
+      }
+    })()
+    return () => localStream?.getTracks().forEach(t => t.stop())
+  }, [])
+
+  // ── Load avatar image ──
+  useEffect(() => {
+    if (!customAvatarUrl) { avatarImgRef.current = null; return }
+    const img = new Image()
+    img.onload = () => {
+      avatarImgRef.current = img
+      const scale = Math.min(220 / img.naturalWidth, 220 / img.naturalHeight)
+      vtScaleRef.current = scale
+      setVtScale(scale)
+      vtPosRef.current = {
+        x: CW - img.naturalWidth * scale - 20,
+        y: CH - img.naturalHeight * scale - 100,
+      }
+    }
+    img.src = customAvatarUrl
+  }, [customAvatarUrl])
+
+  // ── Sync useCustom to ref ──
+  useEffect(() => { useCustomRef.current = useCustom }, [useCustom])
+
+  // ── Load preset SVG into Image ──
+  useEffect(() => {
+    const av = PRESET_AVATARS[selectedPreset]
+    const blob = new Blob([buildPresetSVG(av)], { type: 'image/svg+xml' })
+    const url = URL.createObjectURL(blob)
+    const img = new Image(200, 200)
+    img.onload = () => {
+      presetSvgImgRef.current = img
+      URL.revokeObjectURL(url)
+      // init position bottom-right (scale 1 = 200×200px on canvas)
+      if (!useCustomRef.current) {
+        vtScaleRef.current = 1
+        setVtScale(1)
+        vtPosRef.current = { x: CW - 200 - 20, y: CH - 200 - 100 }
+      }
+    }
+    img.src = url
+  }, [selectedPreset])
+
+  // ── Draw loop ──
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')!
+
+    const draw = () => {
+      const video = hiddenVideoRef.current
+      ctx.clearRect(0, 0, CW, CH)
+
+      if (video && video.readyState >= 2 && video.videoWidth > 0) {
+        const vw = video.videoWidth, vh = video.videoHeight
+        const r = Math.max(CW / vw, CH / vh)
+        const dw = vw * r, dh = vh * r
+        ctx.drawImage(video, (CW - dw) / 2, (CH - dh) / 2, dw, dh)
+      } else {
+        ctx.fillStyle = '#0D0B1E'
+        ctx.fillRect(0, 0, CW, CH)
+        ctx.strokeStyle = 'rgba(0,229,255,0.06)'
+        ctx.lineWidth = 1
+        for (let x = 0; x < CW; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, CH); ctx.stroke() }
+        for (let y = 0; y < CH; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CW, y); ctx.stroke() }
+      }
+
+      const img = useCustomRef.current ? avatarImgRef.current : presetSvgImgRef.current
+      if (img && img.complete) {
+        const { x, y } = vtPosRef.current
+        const sc = vtScaleRef.current
+        ctx.drawImage(img, x, y, img.naturalWidth * sc, img.naturalHeight * sc)
+      }
+
+      rafRef.current = requestAnimationFrame(draw)
+    }
+
+    rafRef.current = requestAnimationFrame(draw)
+    return () => cancelAnimationFrame(rafRef.current)
+  }, [])
+
+  // ── Coordinate helpers ──
+  const clientToCanvas = useCallback((clientX: number, clientY: number) => {
+    const rect = canvasRef.current!.getBoundingClientRect()
+    return {
+      x: (clientX - rect.left) * (CW / rect.width),
+      y: (clientY - rect.top) * (CH / rect.height),
+    }
+  }, [])
+
+  const hitTest = useCallback((cx: number, cy: number) => {
+    const img = useCustomRef.current ? avatarImgRef.current : presetSvgImgRef.current
+    if (!img) return false
+    const { x, y } = vtPosRef.current
+    const sc = vtScaleRef.current
+    return cx >= x && cx <= x + img.naturalWidth * sc && cy >= y && cy <= y + img.naturalHeight * sc
+  }, [])
+
+  // ── Mouse drag ──
+  const onMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const pt = clientToCanvas(e.clientX, e.clientY)
+    if (hitTest(pt.x, pt.y)) {
+      isDraggingRef.current = true
+      dragOffsetRef.current = { x: pt.x - vtPosRef.current.x, y: pt.y - vtPosRef.current.y }
+      e.preventDefault()
+    }
+  }, [clientToCanvas, hitTest])
+
+  const onMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDraggingRef.current) return
+    const pt = clientToCanvas(e.clientX, e.clientY)
+    vtPosRef.current = { x: pt.x - dragOffsetRef.current.x, y: pt.y - dragOffsetRef.current.y }
+    e.preventDefault()
+  }, [clientToCanvas])
+
+  const onMouseUp = useCallback(() => { isDraggingRef.current = false }, [])
+
+  // ── Touch drag + pinch ──
+  const onTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length === 1) {
+      const pt = clientToCanvas(e.touches[0].clientX, e.touches[0].clientY)
+      if (hitTest(pt.x, pt.y)) {
+        isDraggingRef.current = true
+        dragOffsetRef.current = { x: pt.x - vtPosRef.current.x, y: pt.y - vtPosRef.current.y }
+        e.preventDefault()
+      }
+    } else if (e.touches.length === 2) {
+      isDraggingRef.current = false
+      pinchStartDistRef.current = getTouchDist(e.touches[0], e.touches[1])
+      pinchStartScaleRef.current = vtScaleRef.current
+      // pivot = midpoint of pinch in canvas coords
+      const mid = clientToCanvas(
+        (e.touches[0].clientX + e.touches[1].clientX) / 2,
+        (e.touches[0].clientY + e.touches[1].clientY) / 2,
+      )
+      pinchCenterRef.current = mid
+      pinchStartPosRef.current = { ...vtPosRef.current }
+      e.preventDefault()
+    }
+  }, [clientToCanvas, hitTest])
+
+  const onTouchMove = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length === 1 && isDraggingRef.current) {
+      const pt = clientToCanvas(e.touches[0].clientX, e.touches[0].clientY)
+      vtPosRef.current = { x: pt.x - dragOffsetRef.current.x, y: pt.y - dragOffsetRef.current.y }
+      e.preventDefault()
+    } else if (e.touches.length === 2) {
+      const dist = getTouchDist(e.touches[0], e.touches[1])
+      const newScale = Math.max(0.08, Math.min(5, pinchStartScaleRef.current * (dist / pinchStartDistRef.current)))
+      // scale around pinch center
+      const ratio = newScale / pinchStartScaleRef.current
+      const pivot = pinchCenterRef.current
+      const startPos = pinchStartPosRef.current
+      vtPosRef.current = {
+        x: pivot.x - (pivot.x - startPos.x) * ratio,
+        y: pivot.y - (pivot.y - startPos.y) * ratio,
+      }
+      vtScaleRef.current = newScale
+      setVtScale(newScale)
+      e.preventDefault()
+    }
+  }, [clientToCanvas])
+
+  const onTouchEnd = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length < 2) {
+      // pinch ended — re-anchor if one finger remains
+      if (e.touches.length === 1) {
+        const pt = clientToCanvas(e.touches[0].clientX, e.touches[0].clientY)
+        if (hitTest(pt.x, pt.y)) {
+          isDraggingRef.current = true
+          dragOffsetRef.current = { x: pt.x - vtPosRef.current.x, y: pt.y - vtPosRef.current.y }
+        }
+      } else {
+        isDraggingRef.current = false
+      }
+    }
+  }, [clientToCanvas, hitTest])
+
+  // ── Scale buttons ──
+  const adjustScale = useCallback((delta: number) => {
+    const ns = Math.max(0.08, Math.min(5, vtScaleRef.current + delta))
+    vtScaleRef.current = ns
+    setVtScale(ns)
+  }, [])
+
+  // ── File upload ──
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      setCustomAvatarUrl(ev.target!.result as string)
+      setUseCustom(true)
+      useCustomRef.current = true
+      setShowAvatarPicker(false)
+      setShowNameInput(true)
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }, [])
+
+  // ── Start recording ──
+  const startRecording = useCallback(async () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    setMicError(null)
+    recordedChunksRef.current = []
+    recordedBlobRef.current = null
+
+    let audioStream: MediaStream | null = null
+    try {
+      audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      audioStreamRef.current = audioStream
+    } catch {
+      setMicError('マイクへのアクセスが拒否されました（映像のみ録画）')
+    }
+
+    const canvasStream = (canvas as HTMLCanvasElement & { captureStream(fps?: number): MediaStream }).captureStream(30)
+    const tracks = [...canvasStream.getVideoTracks(), ...(audioStream?.getAudioTracks() ?? [])]
+    const combined = new MediaStream(tracks)
+
+    const mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', ''].find(
+      t => t === '' || MediaRecorder.isTypeSupported(t)
+    ) ?? ''
+
+    const mr = new MediaRecorder(combined, mimeType ? { mimeType } : {})
+    mr.ondataavailable = ev => { if (ev.data.size > 0) recordedChunksRef.current.push(ev.data) }
+    mr.onstop = () => {
+      audioStreamRef.current?.getTracks().forEach(t => t.stop())
+      audioStreamRef.current = null
+      const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
+      recordedBlobRef.current = blob
+      if (previewVideoRef.current) {
+        previewVideoRef.current.src = URL.createObjectURL(blob)
+      }
+    }
+    mr.start(100)
+    mediaRecorderRef.current = mr
+
+    setRecordingTime(0)
+    setAppState('recording')
+    timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000)
+  }, [])
+
+  // ── Stop recording ──
+  const stopRecording = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current)
+    const dur = recordingTime || 1
+    setPlaybackDuration(dur)
+    setPlaybackTime(0)
+
+    const mr = mediaRecorderRef.current
+    if (mr && mr.state !== 'inactive') mr.stop()
+    mediaRecorderRef.current = null
+    setAppState('preview')
+  }, [recordingTime])
+
+  // ── Playback ──
+  const startPlayback = useCallback(() => {
+    setPlaybackTime(0)
+    setAppState('playing')
+    const pv = previewVideoRef.current
+    if (pv && recordedBlobRef.current) {
+      pv.currentTime = 0
+      pv.play()
+      pv.onended = () => { setAppState('preview'); setPlaybackTime(0) }
+    }
+    playbackTimerRef.current = setInterval(() => {
+      setPlaybackTime(t => {
+        if (t + 1 >= playbackDuration) { clearInterval(playbackTimerRef.current!); return t + 1 }
+        return t + 1
+      })
+    }, 1000)
+  }, [playbackDuration])
+
+  const stopPlayback = useCallback(() => {
+    if (playbackTimerRef.current) clearInterval(playbackTimerRef.current)
+    previewVideoRef.current?.pause()
+    setAppState('preview')
+    setPlaybackTime(0)
+  }, [])
+
+  // ── Retake ──
+  const retake = useCallback(() => {
+    if (playbackTimerRef.current) clearInterval(playbackTimerRef.current)
+    const pv = previewVideoRef.current
+    if (pv) { pv.pause(); pv.src = '' }
+    recordedBlobRef.current = null
+    setRecordingTime(0)
+    setPlaybackTime(0)
+    setAppState('idle')
+  }, [])
+
+  // ── Save ──
+  const save = useCallback(() => {
+    const blob = recordedBlobRef.current
+    if (blob) {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `VTuLog_${Date.now()}.webm`
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 2000)
+    }
+    setShowSaved(true)
+    setTimeout(() => { setShowSaved(false); retake() }, 2200)
+  }, [retake])
+
+  // ── Cleanup ──
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current)
+    if (playbackTimerRef.current) clearInterval(playbackTimerRef.current)
+  }, [])
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: '#0D0B1E',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '48px',
-        padding: '48px 24px',
-        fontFamily: 'var(--font-display, system-ui)',
-      }}
-    >
-      {/* Label */}
-      <div style={{ textAlign: 'center' }}>
-        <h1 style={{ color: '#FF3FA4', fontSize: '22px', fontWeight: 600, margin: 0, letterSpacing: '0.05em' }}>
-          VTuLog
-        </h1>
-        <p style={{ color: '#8B82B0', fontSize: '12px', marginTop: '6px' }}>PWA アイコン プレビュー</p>
-      </div>
+    <div className="h-full flex items-center justify-center" style={{ background: 'var(--color-bg)', fontFamily: 'var(--font-body)' }}>
+      {/* hidden camera video source */}
+      <video ref={hiddenVideoRef} autoPlay playsInline muted style={{ display: 'none' }} />
 
-      {/* Main icon */}
-      <div style={{ borderRadius: '112px', overflow: 'hidden', boxShadow: '0 0 0 1px rgba(255,63,164,0.3), 0 24px 80px rgba(0,0,0,0.6)' }}>
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-          {/* Background */}
-          <rect width="512" height="512" fill="#C5EEFF"/>
+      {/* hidden file input */}
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
 
-          {/* Camera body */}
-          <rect x="60" y="172" width="392" height="278" rx="48" fill="#FF3FA4"/>
-
-          {/* Camera top bump */}
-          <rect x="192" y="130" width="128" height="64" rx="22" fill="#FF3FA4"/>
-
-          {/* Lens — white circle (camera lens + VTuber face stage) */}
-          <circle cx="252" cy="311" r="116" fill="white"/>
-
-          {/* Left eye iris */}
-          <ellipse cx="214" cy="300" rx="27" ry="32" fill="#00CFFF"/>
-          {/* Left pupil */}
-          <circle cx="214" cy="305" r="14" fill="#0F0030"/>
-          {/* Left catchlight */}
-          <circle cx="222" cy="295" r="6" fill="white"/>
-
-          {/* Right eye iris */}
-          <ellipse cx="290" cy="300" rx="27" ry="32" fill="#00CFFF"/>
-          {/* Right pupil */}
-          <circle cx="290" cy="305" r="14" fill="#0F0030"/>
-          {/* Right catchlight */}
-          <circle cx="298" cy="295" r="6" fill="white"/>
-
-          {/* Record dot */}
-          <circle cx="406" cy="214" r="27" fill="#FF3B3B"/>
-        </svg>
-      </div>
-
-      {/* Size preview row */}
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '20px', flexWrap: 'wrap', justifyContent: 'center' }}>
-        {sizes.map(s => {
-          const radius = Math.round(s * 0.22)
-          return (
-            <div key={s} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-              <div style={{ borderRadius: `${radius}px`, overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width={s} height={s}>
-                  <rect width="512" height="512" fill="#C5EEFF"/>
-                  <rect x="60" y="172" width="392" height="278" rx="48" fill="#FF3FA4"/>
-                  <rect x="192" y="130" width="128" height="64" rx="22" fill="#FF3FA4"/>
-                  <circle cx="252" cy="311" r="116" fill="white"/>
-                  <ellipse cx="214" cy="300" rx="27" ry="32" fill="#00CFFF"/>
-                  <circle cx="214" cy="305" r="14" fill="#0F0030"/>
-                  <circle cx="222" cy="295" r="6" fill="white"/>
-                  <ellipse cx="290" cy="300" rx="27" ry="32" fill="#00CFFF"/>
-                  <circle cx="290" cy="305" r="14" fill="#0F0030"/>
-                  <circle cx="298" cy="295" r="6" fill="white"/>
-                  <circle cx="406" cy="214" r="27" fill="#FF3B3B"/>
-                </svg>
-              </div>
-              <span style={{ color: '#8B82B0', fontSize: '11px' }}>{s}px</span>
+      {/* phone frame */}
+      <div
+        className="relative overflow-hidden flex flex-col"
+        style={{
+          width: 'min(390px, 100vw)',
+          height: 'min(844px, 100vh)',
+          borderRadius: 'min(44px, 5vw)',
+          background: 'var(--color-surface)',
+          boxShadow: '0 0 0 1px rgba(123,47,255,0.4), 0 0 60px rgba(123,47,255,0.15), 0 32px 80px rgba(0,0,0,0.6)',
+        }}
+      >
+        {/* status bar */}
+        <div className="flex items-center justify-between px-6 pt-3 pb-1 shrink-0 z-10"
+          style={{ fontFamily: 'var(--font-display)', fontSize: '12px', color: 'var(--color-muted)' }}>
+          <span>9:41</span>
+          <div className="flex gap-1 items-center">
+            {[0,1,2].map(i => <div key={i} className="w-1 h-1 rounded-full" style={{ background: 'var(--color-muted)' }} />)}
+            <div className="ml-1 w-5 h-2.5 rounded-sm border" style={{ borderColor: 'var(--color-muted)' }}>
+              <div className="w-3/4 h-full rounded-sm" style={{ background: 'var(--color-cyan)' }} />
             </div>
-          )
-        })}
-      </div>
-
-      {/* Legend */}
-      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', justifyContent: 'center' }}>
-        {[
-          { color: '#FF3FA4', label: 'カメラ本体' },
-          { color: '#00CFFF', label: 'VTuberの目' },
-          { color: '#FF3B3B', label: '録画（REC）' },
-          { color: '#C5EEFF', label: '背景' },
-        ].map(({ color, label }) => (
-          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: color }} />
-            <span style={{ color: '#8B82B0', fontSize: '12px' }}>{label}</span>
           </div>
-        ))}
-      </div>
+        </div>
 
-      <p style={{ color: '#5A4E7A', fontSize: '11px', textAlign: 'center', maxWidth: '320px', lineHeight: 1.7 }}>
-        <code style={{ color: '#7B5FFF' }}>public/icon.svg</code> と <code style={{ color: '#7B5FFF' }}>public/manifest.json</code> を生成済み。<br />
-        カメラアプリに戻るには App.tsx を元に戻してください。
-      </p>
+        {/* header */}
+        <div className="flex items-center justify-between px-5 pb-2 shrink-0 z-10">
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '26px', fontWeight: 600, lineHeight: 1, color: 'var(--color-text)' }}>
+            VTu<span style={{ color: 'var(--color-pink)' }}>Log</span>
+          </h1>
+          <div className="flex items-center gap-2">
+            {isCapturing && cameraReady && (
+              <div className="flex items-center gap-1.5 glass rounded-full px-3 py-1">
+                <div className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--color-cyan)' }} />
+                <span style={{ fontSize: '10px', color: 'var(--color-cyan)', fontFamily: 'var(--font-display)' }}>LIVE</span>
+              </div>
+            )}
+            {isPreviewMode && (
+              <div className="glass rounded-full px-3 py-1" style={{ fontSize: '11px', color: 'var(--color-muted)' }}>
+                {formatTime(playbackDuration)}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* viewfinder */}
+        <div className="relative flex-1 mx-3 rounded-2xl overflow-hidden" style={{ minHeight: 0 }}>
+
+          {/* ── Canvas (camera + composited avatar) ── */}
+          <canvas
+            ref={canvasRef}
+            width={CW}
+            height={CH}
+            className="absolute inset-0 w-full h-full"
+            style={{
+              objectFit: 'cover',
+              display: isCapturing ? 'block' : 'none',
+              cursor: useCustom && avatarImgRef.current ? 'grab' : 'default',
+              touchAction: 'none',
+            }}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseUp}
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
+          />
+
+          {/* Camera error/loading overlay */}
+          {!cameraReady && isCapturing && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3" style={{ background: '#0D0B1E', zIndex: 5 }}>
+              {cameraError ? (
+                <>
+                  <span style={{ fontSize: '36px' }}>📷</span>
+                  <p style={{ fontSize: '13px', color: 'var(--color-muted)', textAlign: 'center', padding: '0 28px' }}>{cameraError}</p>
+                </>
+              ) : (
+                <>
+                  <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'var(--color-cyan)' }} />
+                  <p style={{ fontSize: '12px', color: 'var(--color-muted)' }}>カメラ起動中…</p>
+                </>
+              )}
+            </div>
+          )}
+
+
+          {/* ── Preview / playback video ── */}
+          <video
+            ref={previewVideoRef}
+            playsInline
+            className="absolute inset-0 w-full h-full"
+            style={{ objectFit: 'cover', display: isPreviewMode ? 'block' : 'none' }}
+          />
+
+          {/* Recording border */}
+          {appState === 'recording' && (
+            <div className="absolute inset-0 rounded-2xl pointer-events-none" style={{ border: '2px solid rgba(255,59,59,0.7)', zIndex: 15 }} />
+          )}
+
+          {/* Viewfinder corners */}
+          {isCapturing && (
+            <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 12 }}>
+              {(['top-3 left-3 border-t-2 border-l-2 rounded-tl-lg',
+                'top-3 right-3 border-t-2 border-r-2 rounded-tr-lg',
+                'bottom-3 left-3 border-b-2 border-l-2 rounded-bl-lg',
+                'bottom-3 right-3 border-b-2 border-r-2 rounded-br-lg',
+              ]).map(c => (
+                <div key={c} className={`absolute w-6 h-6 ${c}`} style={{ borderColor: 'var(--color-cyan)', opacity: 0.55 }} />
+              ))}
+            </div>
+          )}
+
+          {/* REC indicator */}
+          {appState === 'recording' && (
+            <div className="absolute top-4 left-4 flex items-center gap-2 glass rounded-full px-3 py-1.5" style={{ zIndex: 20 }}>
+              <div className="w-2 h-2 rounded-full animate-rec-blink" style={{ background: 'var(--color-rec)' }} />
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: '13px', color: 'var(--color-rec)', fontWeight: 600 }}>
+                REC {formatTime(recordingTime)}
+              </span>
+            </div>
+          )}
+
+          {/* Preview badge */}
+          {isPreviewMode && (
+            <div className="absolute top-4 left-4 glass rounded-full px-3 py-1.5 animate-fade-in" style={{ zIndex: 20 }}>
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: '13px', color: 'var(--color-cyan)', fontWeight: 600 }}>
+                {appState === 'playing' ? `▶ ${formatTime(playbackTime)}` : '⏸ プレビュー'}
+              </span>
+            </div>
+          )}
+
+          {/* Playback progress bar */}
+          {isPreviewMode && (
+            <div className="absolute bottom-0 left-0 right-0 h-1" style={{ zIndex: 20 }}>
+              <div className="h-full progress-bar transition-all"
+                style={{ width: appState === 'playing' ? `${(playbackTime / playbackDuration) * 100}%` : '100%', opacity: appState === 'playing' ? 1 : 0.3 }} />
+            </div>
+          )}
+
+          {/* ── Avatar controls (scale + picker trigger) ── */}
+          {isCapturing && (
+            <div className="absolute left-3 bottom-4 flex flex-col gap-2" style={{ zIndex: 20 }}>
+              {/* Avatar picker button */}
+              <button
+                className="glass rounded-xl px-2.5 py-2 flex items-center gap-1.5 transition-all active:scale-95"
+                style={{ border: `1px solid ${displayAvatarColor}44` }}
+                onClick={() => setShowAvatarPicker(v => !v)}
+              >
+                {useCustom && customAvatarUrl ? (
+                  <img src={customAvatarUrl} className="w-5 h-5 rounded-md object-cover" alt="" />
+                ) : (
+                  <span style={{ fontSize: '14px' }}>👤</span>
+                )}
+                <span style={{ fontSize: '10px', fontFamily: 'var(--font-display)', color: displayAvatarColor }}>
+                  {displayAvatarName}
+                </span>
+              </button>
+
+              {/* Scale controls */}
+              {(useCustom ? !!avatarImgRef.current : !!presetSvgImgRef.current) && (
+                <div className="glass rounded-xl flex items-center gap-1 px-2 py-1.5" style={{ border: '1px solid var(--color-border)' }}>
+                  <button
+                    className="w-6 h-6 rounded-lg flex items-center justify-center transition-all active:scale-90"
+                    style={{ background: 'rgba(255,63,164,0.2)', fontSize: '14px', lineHeight: 1, color: 'var(--color-pink)' }}
+                    onClick={() => adjustScale(-0.05)}
+                  >−</button>
+                  <span style={{ fontSize: '10px', fontFamily: 'var(--font-display)', color: 'var(--color-muted)', minWidth: '32px', textAlign: 'center' }}>
+                    {Math.round(vtScale * 100)}%
+                  </span>
+                  <button
+                    className="w-6 h-6 rounded-lg flex items-center justify-center transition-all active:scale-90"
+                    style={{ background: 'rgba(255,63,164,0.2)', fontSize: '14px', lineHeight: 1, color: 'var(--color-pink)' }}
+                    onClick={() => adjustScale(0.05)}
+                  >+</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Avatar picker popup */}
+          {showAvatarPicker && (
+            <div
+              className="absolute bottom-16 left-3 glass rounded-2xl p-3 animate-zoom-in"
+              style={{ zIndex: 30, width: '220px', border: '1px solid var(--color-border)' }}
+              onClick={e => e.stopPropagation()}
+            >
+              <p style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-display)', marginBottom: '8px' }}>プリセットキャラ</p>
+              <div className="flex gap-2 mb-3">
+                {PRESET_AVATARS.map((av, i) => (
+                  <button key={av.id}
+                    className="flex-1 flex flex-col items-center gap-1 rounded-xl py-2 transition-all"
+                    style={{
+                      background: !useCustom && selectedPreset === i ? `${av.color}22` : 'transparent',
+                      border: !useCustom && selectedPreset === i ? `1px solid ${av.color}55` : '1px solid transparent',
+                    }}
+                    onClick={() => { setSelectedPreset(i); setUseCustom(false); useCustomRef.current = false; setShowAvatarPicker(false) }}
+                  >
+                    <AvatarFace avatar={av} size={34} animated={false} />
+                    <span style={{ fontSize: '9px', color: av.color, fontFamily: 'var(--font-display)' }}>{av.name}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="h-px mb-3" style={{ background: 'var(--color-border)' }} />
+              <p style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-display)', marginBottom: '8px' }}>オリジナルVTuber</p>
+              {customAvatarUrl && (
+                <button
+                  className="w-full flex items-center gap-2 rounded-xl px-2.5 py-2 mb-2 transition-all"
+                  style={{
+                    background: useCustom ? 'rgba(255,63,164,0.15)' : 'transparent',
+                    border: useCustom ? '1px solid rgba(255,63,164,0.4)' : '1px solid var(--color-border)',
+                  }}
+                  onClick={() => { setUseCustom(true); setShowAvatarPicker(false) }}
+                >
+                  <img src={customAvatarUrl} className="w-8 h-8 rounded-lg object-cover shrink-0" alt="" />
+                  <span style={{ fontSize: '11px', color: 'var(--color-pink)', fontFamily: 'var(--font-display)', textAlign: 'left' }}>
+                    {avatarName}
+                  </span>
+                  {useCustom && <span style={{ marginLeft: 'auto', fontSize: '14px' }}>✓</span>}
+                </button>
+              )}
+              <button
+                className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 transition-all active:scale-95"
+                style={{ background: 'rgba(255,63,164,0.1)', border: '1px dashed rgba(255,63,164,0.45)' }}
+                onClick={() => { setShowAvatarPicker(false); fileInputRef.current?.click() }}
+              >
+                <span style={{ fontSize: '16px' }}>📁</span>
+                <span style={{ fontSize: '11px', color: 'var(--color-pink)', fontFamily: 'var(--font-display)' }}>
+                  {customAvatarUrl ? '画像を変更' : 'VTuberをアップロード'}
+                </span>
+              </button>
+              {useCustom && (
+                <p style={{ fontSize: '9px', color: 'var(--color-muted)', marginTop: '8px', textAlign: 'center' }}>
+                  ドラッグで移動・ピンチで拡縮
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Name input overlay */}
+          {showNameInput && (
+            <div className="absolute inset-0 flex items-center justify-center animate-fade-in" style={{ background: 'rgba(13,11,30,0.88)', zIndex: 40 }}>
+              <div className="glass rounded-3xl p-6 mx-6 w-full" style={{ border: '1px solid rgba(255,63,164,0.4)' }}>
+                <p style={{ fontFamily: 'var(--font-display)', fontSize: '15px', color: 'var(--color-text)', marginBottom: '4px', fontWeight: 600 }}>
+                  アップロード完了！
+                </p>
+                <p style={{ fontSize: '12px', color: 'var(--color-muted)', marginBottom: '16px' }}>
+                  VTuberの名前を設定してください
+                </p>
+                <input
+                  type="text"
+                  value={avatarName}
+                  onChange={e => setAvatarName(e.target.value)}
+                  className="w-full rounded-xl px-4 py-2.5 outline-none mb-3"
+                  style={{ background: 'var(--color-panel)', border: '1px solid var(--color-border)', color: 'var(--color-text)', fontFamily: 'var(--font-display)', fontSize: '16px' }}
+                  autoFocus
+                />
+                <button
+                  className="w-full rounded-xl py-2.5 transition-all active:scale-95 glow-pink"
+                  style={{ background: 'linear-gradient(135deg, var(--color-pink), var(--color-purple))', fontFamily: 'var(--font-display)', fontSize: '14px', color: 'white', fontWeight: 600 }}
+                  onClick={() => setShowNameInput(false)}
+                >
+                  決定
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* tap-outside to close picker */}
+          {showAvatarPicker && (
+            <div className="absolute inset-0" style={{ zIndex: 25 }} onClick={() => setShowAvatarPicker(false)} />
+          )}
+        </div>
+
+        {/* mic error notice */}
+        {micError && isCapturing && (
+          <div className="mx-3 mt-1.5 rounded-xl px-3 py-1.5 flex items-center gap-2 shrink-0"
+            style={{ background: 'rgba(255,59,59,0.1)', border: '1px solid rgba(255,59,59,0.3)' }}>
+            <span style={{ fontSize: '12px' }}>🎙</span>
+            <span style={{ fontSize: '10px', color: 'rgba(255,100,100,0.9)' }}>{micError}</span>
+          </div>
+        )}
+
+        {/* controls */}
+        <div className="shrink-0 px-5 pt-3 pb-6">
+
+          {appState === 'idle' && (
+            <div className="flex flex-col items-center gap-3 animate-fade-in">
+              <p style={{ fontSize: '11px', color: 'var(--color-muted)', fontFamily: 'var(--font-display)' }}>
+                ドラッグで移動 / ピンチ・ボタンで拡縮
+              </p>
+              <div className="relative">
+                <div className="absolute inset-0 rounded-full animate-pulse-ring" style={{ background: 'var(--color-pink)', opacity: 0.3 }} />
+                <button
+                  className="relative w-20 h-20 rounded-full btn-record flex items-center justify-center glow-pink"
+                  onClick={startRecording}
+                  disabled={!!cameraError}
+                  style={{ opacity: cameraError ? 0.45 : 1 }}
+                >
+                  <div className="w-6 h-6 rounded-full bg-white/90" />
+                </button>
+              </div>
+              <p style={{ fontSize: '11px', color: 'var(--color-muted)' }}>タップして録画開始</p>
+            </div>
+          )}
+
+          {appState === 'recording' && (
+            <div className="flex flex-col items-center gap-3 animate-fade-in">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full animate-rec-blink" style={{ background: 'var(--color-rec)' }} />
+                <span style={{ fontFamily: 'var(--font-display)', fontSize: '14px', color: 'var(--color-rec)' }}>録画中…</span>
+              </div>
+              <button
+                className="w-20 h-20 rounded-full btn-stop flex items-center justify-center glow-rec"
+                onClick={stopRecording}
+              >
+                <div className="w-7 h-7 rounded-md" style={{ background: 'white' }} />
+              </button>
+              <p style={{ fontSize: '11px', color: 'var(--color-muted)' }}>タップして停止</p>
+            </div>
+          )}
+
+          {appState === 'preview' && (
+            <div className="animate-fade-in">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <div>
+                  <span style={{ fontFamily: 'var(--font-display)', fontSize: '12px', color: 'var(--color-muted)' }}>録画時間</span>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: '22px', color: 'var(--color-text)', fontWeight: 600 }}>
+                    {formatTime(playbackDuration)}
+                  </div>
+                </div>
+                <div className="flex-1 h-px" style={{ background: 'var(--color-border)' }} />
+                <div style={{ fontSize: '11px', color: 'var(--color-muted)' }}>{displayAvatarName}</div>
+              </div>
+              <div className="flex gap-3">
+                <button className="flex-1 glass rounded-2xl py-3.5 flex flex-col items-center gap-1.5 transition-all active:scale-95" onClick={retake}>
+                  <span style={{ fontSize: '22px' }}>🔄</span>
+                  <span style={{ fontSize: '12px', color: 'var(--color-muted)', fontFamily: 'var(--font-display)' }}>撮り直し</span>
+                </button>
+                <button className="flex-1 rounded-2xl py-3.5 flex flex-col items-center gap-1.5 transition-all active:scale-95"
+                  style={{ background: 'rgba(0,229,255,0.15)', border: '1px solid rgba(0,229,255,0.4)' }} onClick={startPlayback}>
+                  <span style={{ fontSize: '22px' }}>▶️</span>
+                  <span style={{ fontFamily: 'var(--font-display)', fontSize: '12px', color: 'var(--color-cyan)' }}>再生</span>
+                </button>
+                <button className="flex-1 rounded-2xl py-3.5 flex flex-col items-center gap-1.5 transition-all active:scale-95 glow-pink"
+                  style={{ background: 'linear-gradient(135deg, var(--color-pink), var(--color-purple))' }} onClick={save}>
+                  <span style={{ fontSize: '22px' }}>💾</span>
+                  <span style={{ fontFamily: 'var(--font-display)', fontSize: '12px', color: 'white', fontWeight: 600 }}>保存</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {appState === 'playing' && (
+            <div className="animate-fade-in">
+              <div className="flex items-center justify-between mb-3 px-1">
+                <span style={{ fontFamily: 'var(--font-display)', fontSize: '13px', color: 'var(--color-cyan)' }}>{formatTime(playbackTime)}</span>
+                <div className="flex-1 mx-3 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--color-panel)' }}>
+                  <div className="h-full rounded-full transition-all"
+                    style={{ width: `${(playbackTime / playbackDuration) * 100}%`, background: 'linear-gradient(90deg, var(--color-pink), var(--color-cyan))' }} />
+                </div>
+                <span style={{ fontFamily: 'var(--font-display)', fontSize: '13px', color: 'var(--color-muted)' }}>{formatTime(playbackDuration)}</span>
+              </div>
+              <button className="w-full glass rounded-2xl py-3.5 flex items-center justify-center gap-2 transition-all active:scale-95" onClick={stopPlayback}>
+                <div className="w-4 h-4 rounded-sm" style={{ background: 'var(--color-cyan)' }} />
+                <span style={{ fontFamily: 'var(--font-display)', fontSize: '14px', color: 'var(--color-cyan)' }}>停止</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* saved toast */}
+        {showSaved && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 50 }}>
+            <div className="glass rounded-3xl px-8 py-6 flex flex-col items-center gap-3 animate-zoom-in"
+              style={{ border: '1px solid rgba(255,63,164,0.5)', boxShadow: '0 0 40px rgba(255,63,164,0.3)' }}>
+              <div style={{ fontSize: '48px' }}>✨</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: '20px', color: 'var(--color-pink)', fontWeight: 600 }}>保存しました！</div>
+              <div style={{ fontSize: '13px', color: 'var(--color-muted)' }}>端末にダウンロードされました</div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
