@@ -93,7 +93,916 @@ function Live2DDiagPanel({
         {status === 'loading' ? '解析中…' : isError ? '読み込みエラー' : '診断ログ'}
       </p>
 
-      {diag && (<div>
+      {diag && (<>
+        {/* ── 1. File inventory ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+          <DiagRow label="選択ファイル数" ok={diag.fileCount > 0}      detail={`${diag.fileCount} 件`} />
+          <DiagRow label="model3.json"   ok={diag.model3Name !== null} detail={diag.model3Name ?? '未検出'} />
+          <DiagRow label=".moc3"         ok={diag.mocFile !== null}    detail={diag.mocFile ?? '未検出'} />
+          <DiagRow
+            label="テクスチャ"
+            ok={diag.textureCount > 0 ? true : null}
+            detail={diag.textureCount > 0 ? `${diag.textureCount} 枚` : '未検出'}
+          />
+          <DiagRow
+            label="physics3.json"
+            ok={diag.physicsFile !== null ? true : null}
+            detail={diag.physicsFile ?? 'なし'}
+          />
+        </div>
+
+        {/* ── 2. Path resolution (moc match check) ── */}
+        {(diag.settingsUrl || diag.resolvedMocPath) && (
+          <div style={{ marginTop: '8px', padding: '6px 8px', borderRadius: '7px', background: 'rgba(0,229,255,0.04)', border: '1px solid rgba(0,229,255,0.12)' }}>
+            <p style={{ fontSize: '9px', color: CYAN, marginBottom: '4px', fontFamily: 'var(--font-display)', letterSpacing: '0.05em' }}>パス解決</p>
+            {diag.settingsUrl && (
+              <p style={{ ...MONO, color: MUTED }}><span style={{ color: '#5A527A' }}>settings.url:      </span>{diag.settingsUrl}</p>
+            )}
+            {/* raw paths */}
+            {diag.resolvedMocPath && (
+              <p style={{ ...MONO, color: MUTED }}><span style={{ color: '#5A527A' }}>resolveURL(raw):   </span>{diag.resolvedMocPath}</p>
+            )}
+            {diag.mocNormalizedPath && (
+              <p style={{ ...MONO, color: MUTED }}><span style={{ color: '#5A527A' }}>webkit(raw):       </span>{diag.mocNormalizedPath}</p>
+            )}
+            {/* encoded comparison — this is what FileLoader actually compares */}
+            {diag.encodedMocPath && (
+              <p style={{ ...MONO, color: diag.mocPathMatch === false ? RED : CYAN }}>
+                <span style={{ color: '#5A527A' }}>resolveURL(enc):   </span>{diag.encodedMocPath}
+              </p>
+            )}
+            {diag.encodedMocWebkit && (
+              <p style={{ ...MONO, color: diag.mocPathMatch === false ? RED : CYAN }}>
+                <span style={{ color: '#5A527A' }}>webkit(enc):       </span>{diag.encodedMocWebkit}
+                {diag.mocPathMatch !== null && (
+                  <span style={{ marginLeft: '6px', color: diag.mocPathMatch ? CYAN : RED, fontFamily: 'var(--font-display)' }}>
+                    {diag.mocPathMatch ? '✓ 一致' : '✗ 不一致'}
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* ── 3. Per-file normalization log ── */}
+        {diag.normalizedFiles.length > 0 && (
+          <div style={{ marginTop: '6px' }}>
+            <p style={{ fontSize: '9px', color: MUTED, marginBottom: '3px', fontFamily: 'var(--font-display)' }}>
+              webkitRelativePath 正規化 ({diag.normalizedFiles.length}件)
+            </p>
+            <div style={{ maxHeight: '100px', overflowY: 'auto', padding: '4px 6px', borderRadius: '6px', background: 'rgba(255,255,255,0.03)' }}>
+              {(diag.normalizedFiles as NormalizedFileInfo[]).map((f, i) => {
+                const changed = f.originalPath !== f.normalizedPath
+                return (
+                  <div key={i} style={{ marginBottom: '3px' }}>
+                    <p style={{ ...MONO, color: changed ? CYAN : '#5A527A' }}>{f.name}</p>
+                    {changed && (
+                      <>
+                        <p style={{ ...MONO, color: '#5A527A', paddingLeft: '8px' }}>旧: {f.originalPath || '(空)'}</p>
+                        <p style={{ ...MONO, color: CYAN,     paddingLeft: '8px' }}>新: {f.normalizedPath}</p>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </>)}
+
+      {/* Error message */}
+      {isError && errorMsg && (
+        <div style={{ marginTop: '8px', padding: '8px', borderRadius: '8px', background: 'rgba(255,59,59,0.12)' }}>
+          <p style={{ fontSize: '10px', color: RED2, lineHeight: 1.6, whiteSpace: 'pre-line', wordBreak: 'break-all' }}>{errorMsg}</p>
+        </div>
+      )}
+
+      {/* NetworkError detail */}
+      {isError && diag && (diag.networkErrorUrl || diag.networkErrorStatus != null || diag.networkErrorStack) && (
+        <div style={{ marginTop: '6px', padding: '7px 9px', borderRadius: '8px', background: 'rgba(255,59,59,0.07)', border: '1px solid rgba(255,107,107,0.2)' }}>
+          <p style={{ fontSize: '9px', color: RED2, marginBottom: '4px', fontFamily: 'var(--font-display)' }}>NetworkError 詳細</p>
+          {diag.networkErrorUrl     && <p style={{ ...MONO, color: RED }}>url: {diag.networkErrorUrl}</p>}
+          {diag.networkErrorStatus != null && <p style={{ ...MONO, color: RED }}>status: {diag.networkErrorStatus}</p>}
+          {diag.networkErrorAborted && <p style={{ ...MONO, color: RED2 }}>aborted: true</p>}
+          {diag.networkErrorStack   && (
+            <>
+              <p style={{ fontSize: '9px', color: MUTED, marginTop: '4px' }}>stack:</p>
+              <p style={{ ...MONO, color: '#6A6290', maxHeight: '60px', overflow: 'hidden' }}>
+                {diag.networkErrorStack.split('\n').slice(0, 5).join('\n')}
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function formatTime(s: number) {
+  return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`
+}
+
+function getTouchDist(t1: { clientX: number; clientY: number }, t2: { clientX: number; clientY: number }) {
+  return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY)
+}
+
+// Internal canvas resolution (portrait 9:16)
+const CW = 1080
+const CH = 1920
+
+export default function App() {
+  // ── Camera ──
+  const hiddenVideoRef = useRef<HTMLVideoElement>(null)
+  const cameraStreamRef = useRef<MediaStream | null>(null)
+  const [cameraReady, setCameraReady] = useState(false)
+  const [cameraError, setCameraError] = useState<string | null>(null)
+
+  // ── Canvas ──
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const rafRef = useRef<number>(0)
+
+  // ── Avatar ──
+  const [customAvatarUrl, setCustomAvatarUrl] = useState<string | null>(null)
+  const avatarImgRef = useRef<HTMLImageElement | null>(null)
+  const presetSvgImgRef = useRef<HTMLImageElement | null>(null)
+  const useCustomRef = useRef(false)
+  const [useCustom, setUseCustom] = useState(false)
+  const [selectedPreset, setSelectedPreset] = useState(0)
+  const [avatarName, setAvatarName] = useState('マイVTuber')
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false)
+  const [showNameInput, setShowNameInput] = useState(false)
+
+  // ── Avatar transform (refs for draw loop, state for UI) ──
+  const vtPosRef = useRef({ x: CW - 220, y: CH - 300 })
+  const vtScaleRef = useRef(1)
+  const [vtScale, setVtScale] = useState(1)
+
+  // ── Drag ──
+  const isDraggingRef = useRef(false)
+  const dragOffsetRef = useRef({ x: 0, y: 0 })
+
+  // ── Pinch ──
+  const pinchStartDistRef = useRef(0)
+  const pinchStartScaleRef = useRef(1)
+  const pinchCenterRef = useRef({ x: 0, y: 0 })
+  const pinchStartPosRef = useRef({ x: 0, y: 0 })
+
+  // ── Recording ──
+  const [appState, setAppState] = useState<AppState>('idle')
+  const [recordingTime, setRecordingTime] = useState(0)
+  const [playbackTime, setPlaybackTime] = useState(0)
+  const [playbackDuration, setPlaybackDuration] = useState(0)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioStreamRef = useRef<MediaStream | null>(null)
+  const recordedChunksRef = useRef<Blob[]>([])
+  const recordedBlobRef = useRef<Blob | null>(null)
+  const recordedMimeTypeRef = useRef('video/webm')
+  const previewVideoRef = useRef<HTMLVideoElement>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const playbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // ── Live2D ──
+  const live2d = useLive2D()
+  const useLive2DRef = useRef(false)
+  const live2dFolderInputRef = useRef<HTMLInputElement>(null)
+
+  // ── UI ──
+  const [showSaved, setShowSaved] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [micError, setMicError] = useState<string | null>(null)
+
+  const isCapturing = appState === 'idle' || appState === 'recording'
+  const isPreviewMode = appState === 'preview' || appState === 'playing'
+  const presetAvatar = PRESET_AVATARS[selectedPreset]
+  const isLive2DActive = live2d.status === 'loaded'
+  const displayAvatarName = isLive2DActive ? live2d.modelName : useCustom ? avatarName : presetAvatar.name
+  const displayAvatarColor = isLive2DActive ? '#00E5FF' : useCustom ? '#FF3FA4' : presetAvatar.color
+
+  // ── Camera init ──
+  useEffect(() => {
+    let localStream: MediaStream | null = null
+    ;(async () => {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false,
+        })
+        localStream = s
+        cameraStreamRef.current = s
+        const v = hiddenVideoRef.current!
+        v.srcObject = s
+        v.onloadedmetadata = () => { v.play(); setCameraReady(true) }
+      } catch (e) {
+        setCameraError((e as Error).name === 'NotAllowedError' ? 'カメラへのアクセスが拒否されました' : 'カメラを起動できませんでした')
+      }
+    })()
+    return () => localStream?.getTracks().forEach(t => t.stop())
+  }, [])
+
+  // ── Load avatar image ──
+  useEffect(() => {
+    if (!customAvatarUrl) { avatarImgRef.current = null; return }
+    const img = new Image()
+    img.onload = () => {
+      avatarImgRef.current = img
+      const scale = Math.min(220 / img.naturalWidth, 220 / img.naturalHeight)
+      vtScaleRef.current = scale
+      setVtScale(scale)
+      vtPosRef.current = {
+        x: CW - img.naturalWidth * scale - 20,
+        y: CH - img.naturalHeight * scale - 100,
+      }
+    }
+    img.src = customAvatarUrl
+  }, [customAvatarUrl])
+
+  // ── Sync useCustom to ref ──
+  useEffect(() => { useCustomRef.current = useCustom }, [useCustom])
+
+  // ── Sync Live2D loaded state to ref + set initial position ──
+  useEffect(() => {
+    useLive2DRef.current = live2d.status === 'loaded'
+    if (live2d.status === 'loaded') {
+      const displayPx = 240
+      const sc = displayPx / LIVE2D_CANVAS_SIZE
+      vtScaleRef.current = sc
+      setVtScale(sc)
+      vtPosRef.current = { x: CW - LIVE2D_CANVAS_SIZE * sc - 20, y: CH - LIVE2D_CANVAS_SIZE * sc - 100 }
+      setShowAvatarPicker(false)
+    }
+  }, [live2d.status])
+
+  // ── Load preset SVG into Image ──
+  useEffect(() => {
+    const av = PRESET_AVATARS[selectedPreset]
+    const blob = new Blob([buildPresetSVG(av)], { type: 'image/svg+xml' })
+    const url = URL.createObjectURL(blob)
+    const img = new Image(200, 200)
+    img.onload = () => {
+      presetSvgImgRef.current = img
+      URL.revokeObjectURL(url)
+      // init position bottom-right (scale 1 = 200×200px on canvas)
+      if (!useCustomRef.current) {
+        vtScaleRef.current = 1
+        setVtScale(1)
+        vtPosRef.current = { x: CW - 200 - 20, y: CH - 200 - 100 }
+      }
+    }
+    img.src = url
+  }, [selectedPreset])
+
+  // ── Draw loop ──
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')!
+
+    const draw = () => {
+      const video = hiddenVideoRef.current
+      ctx.clearRect(0, 0, CW, CH)
+
+      if (video && video.readyState >= 2 && video.videoWidth > 0) {
+        const vw = video.videoWidth, vh = video.videoHeight
+        const r = Math.max(CW / vw, CH / vh)
+        const dw = vw * r, dh = vh * r
+        ctx.drawImage(video, (CW - dw) / 2, (CH - dh) / 2, dw, dh)
+      } else {
+        ctx.fillStyle = '#0D0B1E'
+        ctx.fillRect(0, 0, CW, CH)
+        ctx.strokeStyle = 'rgba(0,229,255,0.06)'
+        ctx.lineWidth = 1
+        for (let x = 0; x < CW; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, CH); ctx.stroke() }
+        for (let y = 0; y < CH; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CW, y); ctx.stroke() }
+      }
+
+      const { x, y } = vtPosRef.current
+      const sc = vtScaleRef.current
+      if (useLive2DRef.current && live2d.pixiCanvasRef.current) {
+        const sz = LIVE2D_CANVAS_SIZE * sc
+        ctx.drawImage(live2d.pixiCanvasRef.current, 0, 0, LIVE2D_CANVAS_SIZE, LIVE2D_CANVAS_SIZE, x, y, sz, sz)
+      } else {
+        const img = useCustomRef.current ? avatarImgRef.current : presetSvgImgRef.current
+        if (img && img.complete) {
+          ctx.drawImage(img, x, y, img.naturalWidth * sc, img.naturalHeight * sc)
+        }
+      }
+
+      rafRef.current = requestAnimationFrame(draw)
+    }
+
+    rafRef.current = requestAnimationFrame(draw)
+    return () => cancelAnimationFrame(rafRef.current)
+  }, [])
+
+  // ── Coordinate helpers ──
+  const clientToCanvas = useCallback((clientX: number, clientY: number) => {
+    const rect = canvasRef.current!.getBoundingClientRect()
+    return {
+      x: (clientX - rect.left) * (CW / rect.width),
+      y: (clientY - rect.top) * (CH / rect.height),
+    }
+  }, [])
+
+  const hitTest = useCallback((cx: number, cy: number) => {
+    const { x, y } = vtPosRef.current
+    const sc = vtScaleRef.current
+    if (useLive2DRef.current) {
+      const sz = LIVE2D_CANVAS_SIZE * sc
+      return cx >= x && cx <= x + sz && cy >= y && cy <= y + sz
+    }
+    const img = useCustomRef.current ? avatarImgRef.current : presetSvgImgRef.current
+    if (!img) return false
+    return cx >= x && cx <= x + img.naturalWidth * sc && cy >= y && cy <= y + img.naturalHeight * sc
+  }, [])
+
+  // ── Mouse drag ──
+  const onMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const pt = clientToCanvas(e.clientX, e.clientY)
+    if (hitTest(pt.x, pt.y)) {
+      isDraggingRef.current = true
+      dragOffsetRef.current = { x: pt.x - vtPosRef.current.x, y: pt.y - vtPosRef.current.y }
+      e.preventDefault()
+    }
+  }, [clientToCanvas, hitTest])
+
+  const onMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDraggingRef.current) return
+    const pt = clientToCanvas(e.clientX, e.clientY)
+    vtPosRef.current = { x: pt.x - dragOffsetRef.current.x, y: pt.y - dragOffsetRef.current.y }
+    e.preventDefault()
+  }, [clientToCanvas])
+
+  const onMouseUp = useCallback(() => { isDraggingRef.current = false }, [])
+
+  // ── Touch drag + pinch ──
+  const onTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length === 1) {
+      const pt = clientToCanvas(e.touches[0].clientX, e.touches[0].clientY)
+      if (hitTest(pt.x, pt.y)) {
+        isDraggingRef.current = true
+        dragOffsetRef.current = { x: pt.x - vtPosRef.current.x, y: pt.y - vtPosRef.current.y }
+        e.preventDefault()
+      }
+    } else if (e.touches.length === 2) {
+      isDraggingRef.current = false
+      pinchStartDistRef.current = getTouchDist(e.touches[0], e.touches[1])
+      pinchStartScaleRef.current = vtScaleRef.current
+      // pivot = midpoint of pinch in canvas coords
+      const mid = clientToCanvas(
+        (e.touches[0].clientX + e.touches[1].clientX) / 2,
+        (e.touches[0].clientY + e.touches[1].clientY) / 2,
+      )
+      pinchCenterRef.current = mid
+      pinchStartPosRef.current = { ...vtPosRef.current }
+      e.preventDefault()
+    }
+  }, [clientToCanvas, hitTest])
+
+  const onTouchMove = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length === 1 && isDraggingRef.current) {
+      const pt = clientToCanvas(e.touches[0].clientX, e.touches[0].clientY)
+      vtPosRef.current = { x: pt.x - dragOffsetRef.current.x, y: pt.y - dragOffsetRef.current.y }
+      e.preventDefault()
+    } else if (e.touches.length === 2) {
+      const dist = getTouchDist(e.touches[0], e.touches[1])
+      const newScale = Math.max(0.08, Math.min(5, pinchStartScaleRef.current * (dist / pinchStartDistRef.current)))
+      // scale around pinch center
+      const ratio = newScale / pinchStartScaleRef.current
+      const pivot = pinchCenterRef.current
+      const startPos = pinchStartPosRef.current
+      vtPosRef.current = {
+        x: pivot.x - (pivot.x - startPos.x) * ratio,
+        y: pivot.y - (pivot.y - startPos.y) * ratio,
+      }
+      vtScaleRef.current = newScale
+      setVtScale(newScale)
+      e.preventDefault()
+    }
+  }, [clientToCanvas])
+
+  const onTouchEnd = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length < 2) {
+      // pinch ended — re-anchor if one finger remains
+      if (e.touches.length === 1) {
+        const pt = clientToCanvas(e.touches[0].clientX, e.touches[0].clientY)
+        if (hitTest(pt.x, pt.y)) {
+          isDraggingRef.current = true
+          dragOffsetRef.current = { x: pt.x - vtPosRef.current.x, y: pt.y - vtPosRef.current.y }
+        }
+      } else {
+        isDraggingRef.current = false
+      }
+    }
+  }, [clientToCanvas, hitTest])
+
+  // ── Scale buttons ──
+  const adjustScale = useCallback((delta: number) => {
+    const ns = Math.max(0.08, Math.min(5, vtScaleRef.current + delta))
+    vtScaleRef.current = ns
+    setVtScale(ns)
+  }, [])
+
+  // ── Live2D folder upload ──
+  const handleLive2DUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    if (!files.length) return
+    live2d.loadModel(files)
+    e.target.value = ''
+  }, [live2d])
+
+  // ── Image file upload ──
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      setCustomAvatarUrl(ev.target!.result as string)
+      setUseCustom(true)
+      useCustomRef.current = true
+      setShowAvatarPicker(false)
+      setShowNameInput(true)
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }, [])
+
+  // ── Start recording ──
+  const startRecording = useCallback(async () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    setMicError(null)
+    recordedChunksRef.current = []
+    recordedBlobRef.current = null
+
+    let audioStream: MediaStream | null = null
+    try {
+      audioStream = await navigator.mediaDevices.getUserMedia({
+  audio: {
+    sampleRate: { ideal: 48000 },
+    channelCount: { ideal: 1 },
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  },
+})
+      audioStreamRef.current = audioStream
+    } catch {
+      setMicError('マイクへのアクセスが拒否されました（映像のみ録画）')
+    }
+
+    const canvasStream = (canvas as HTMLCanvasElement & { captureStream(fps?: number): MediaStream }).captureStream(30)
+    const tracks = [...canvasStream.getVideoTracks(), ...(audioStream?.getAudioTracks() ?? [])]
+    const combined = new MediaStream(tracks)
+
+    const mimeCandidates = [
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4',
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm',
+    ]
+
+    const mimeType = mimeCandidates.find(type => MediaRecorder.isTypeSupported(type)) ?? ''
+
+    let mr: MediaRecorder
+    try {
+      mr = mimeType
+        ? new MediaRecorder(combined, { mimeType })
+        : new MediaRecorder(combined)
+    } catch {
+      // Fallback to the browser's default recording format.
+      mr = new MediaRecorder(combined)
+    }
+
+    const actualMimeType = mr.mimeType || mimeType || 'video/webm'
+    recordedMimeTypeRef.current = actualMimeType
+
+    mr.ondataavailable = ev => {
+      if (ev.data.size > 0) recordedChunksRef.current.push(ev.data)
+    }
+
+    mr.onstop = () => {
+      audioStreamRef.current?.getTracks().forEach(t => t.stop())
+      audioStreamRef.current = null
+
+      const blob = new Blob(recordedChunksRef.current, { type: actualMimeType })
+      recordedBlobRef.current = blob
+
+      if (previewVideoRef.current) {
+        previewVideoRef.current.src = URL.createObjectURL(blob)
+      }
+    }
+    mr.start(100)
+    mediaRecorderRef.current = mr
+
+    setRecordingTime(0)
+    setAppState('recording')
+    timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000)
+  }, [])
+
+  // ── Stop recording ──
+  const stopRecording = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current)
+    const dur = recordingTime || 1
+    setPlaybackDuration(dur)
+    setPlaybackTime(0)
+
+    const mr = mediaRecorderRef.current
+    if (mr && mr.state !== 'inactive') mr.stop()
+    mediaRecorderRef.current = null
+    setAppState('preview')
+  }, [recordingTime])
+
+  // ── Playback ──
+  const startPlayback = useCallback(() => {
+    setPlaybackTime(0)
+    setAppState('playing')
+    const pv = previewVideoRef.current
+    if (pv && recordedBlobRef.current) {
+      pv.currentTime = 0
+      pv.play()
+      pv.onended = () => { setAppState('preview'); setPlaybackTime(0) }
+    }
+    playbackTimerRef.current = setInterval(() => {
+      setPlaybackTime(t => {
+        if (t + 1 >= playbackDuration) { clearInterval(playbackTimerRef.current!); return t + 1 }
+        return t + 1
+      })
+    }, 1000)
+  }, [playbackDuration])
+
+  const stopPlayback = useCallback(() => {
+    if (playbackTimerRef.current) clearInterval(playbackTimerRef.current)
+    previewVideoRef.current?.pause()
+    setAppState('preview')
+    setPlaybackTime(0)
+  }, [])
+
+  // ── Retake ──
+  const retake = useCallback(() => {
+    if (playbackTimerRef.current) clearInterval(playbackTimerRef.current)
+    const pv = previewVideoRef.current
+    if (pv) { pv.pause(); pv.src = '' }
+    recordedBlobRef.current = null
+    setRecordingTime(0)
+    setPlaybackTime(0)
+    setAppState('idle')
+  }, [])
+
+  // ── Save ──
+  const save = useCallback(() => {
+    const blob = recordedBlobRef.current
+    if (blob) {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const ext = recordedMimeTypeRef.current.includes('mp4') ? 'mp4' : 'webm'
+      a.href = url
+      a.download = `VTuLog_${Date.now()}.${ext}`
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 2000)
+    }
+    setShowSaved(true)
+    setTimeout(() => { setShowSaved(false); retake() }, 2200)
+  }, [retake])
+
+  // ── Cleanup ──
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current)
+    if (playbackTimerRef.current) clearInterval(playbackTimerRef.current)
+  }, [])
+
+  return (
+    <div className="h-full flex items-center justify-center" style={{ background: 'var(--color-bg)', fontFamily: 'var(--font-body)' }}>
+      {/* hidden camera video source */}
+      <video ref={hiddenVideoRef} autoPlay playsInline muted style={{ display: 'none' }} />
+
+      {/* hidden file inputs */}
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+      {/* webkitdirectory lets user pick entire model folder */}
+      <input
+        ref={live2dFolderInputRef}
+        type="file"
+        // @ts-ignore – webkitdirectory is non-standard but widely supported
+        webkitdirectory=""
+        multiple
+        className="hidden"
+        onChange={handleLive2DUpload}
+      />
+
+      {/* phone frame */}
+      <div
+        className="relative overflow-hidden flex flex-col"
+        style={{
+          width: 'min(390px, 100vw)',
+          height: 'min(844px, 100vh)',
+          borderRadius: 'min(44px, 5vw)',
+          background: 'var(--color-surface)',
+          boxShadow: '0 0 0 1px rgba(123,47,255,0.4), 0 0 60px rgba(123,47,255,0.15), 0 32px 80px rgba(0,0,0,0.6)',
+        }}
+      >
+        {/* status bar */}
+        <div className="flex items-center justify-between px-6 pt-3 pb-1 shrink-0 z-10"
+          style={{ fontFamily: 'var(--font-display)', fontSize: '12px', color: 'var(--color-muted)' }}>
+          <span>9:41</span>
+          <div className="flex gap-1 items-center">
+            {[0,1,2].map(i => <div key={i} className="w-1 h-1 rounded-full" style={{ background: 'var(--color-muted)' }} />)}
+            <div className="ml-1 w-5 h-2.5 rounded-sm border" style={{ borderColor: 'var(--color-muted)' }}>
+              <div className="w-3/4 h-full rounded-sm" style={{ background: 'var(--color-cyan)' }} />
+            </div>
+          </div>
+        </div>
+
+        {/* header */}
+        <div className="flex items-center justify-between px-5 pb-2 shrink-0 z-10">
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '26px', fontWeight: 600, lineHeight: 1, color: 'var(--color-text)' }}>
+            VTu<span style={{ color: 'var(--color-pink)' }}>Log</span>
+          </h1>
+          <div className="flex items-center gap-2">
+            {isCapturing && cameraReady && (
+              <div className="flex items-center gap-1.5 glass rounded-full px-3 py-1">
+                <div className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--color-cyan)' }} />
+                <span style={{ fontSize: '10px', color: 'var(--color-cyan)', fontFamily: 'var(--font-display)' }}>LIVE</span>
+              </div>
+            )}
+            {isPreviewMode && (
+              <div className="glass rounded-full px-3 py-1" style={{ fontSize: '11px', color: 'var(--color-muted)' }}>
+                {formatTime(playbackDuration)}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* viewfinder */}
+        <div className="relative flex-1 mx-3 rounded-2xl overflow-hidden" style={{ minHeight: 0 }}>
+
+          {/* ── Canvas (camera + composited avatar) ── */}
+          <canvas
+            ref={canvasRef}
+            width={CW}
+            height={CH}
+            className="absolute inset-0 w-full h-full"
+            style={{
+              objectFit: 'cover',
+              display: isCapturing ? 'block' : 'none',
+              cursor: useCustom && avatarImgRef.current ? 'grab' : 'default',
+              touchAction: 'none',
+            }}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseUp}
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
+          />
+
+          {/* Camera error/loading overlay */}
+          {!cameraReady && isCapturing && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3" style={{ background: '#0D0B1E', zIndex: 5 }}>
+              {cameraError ? (
+                <>
+                  <span style={{ fontSize: '36px' }}>📷</span>
+                  <p style={{ fontSize: '13px', color: 'var(--color-muted)', textAlign: 'center', padding: '0 28px' }}>{cameraError}</p>
+                </>
+              ) : (
+                <>
+                  <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'var(--color-cyan)' }} />
+                  <p style={{ fontSize: '12px', color: 'var(--color-muted)' }}>カメラ起動中…</p>
+                </>
+              )}
+            </div>
+          )}
+
+
+          {/* ── Preview / playback video ── */}
+          <video
+            ref={previewVideoRef}
+            playsInline
+            className="absolute inset-0 w-full h-full"
+            style={{ objectFit: 'cover', display: isPreviewMode ? 'block' : 'none' }}
+          />
+
+          {/* Recording border */}
+          {appState === 'recording' && (
+            <div className="absolute inset-0 rounded-2xl pointer-events-none" style={{ border: '2px solid rgba(255,59,59,0.7)', zIndex: 15 }} />
+          )}
+
+          {/* Viewfinder corners */}
+          {isCapturing && (
+            <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 12 }}>
+              {(['top-3 left-3 border-t-2 border-l-2 rounded-tl-lg',
+                'top-3 right-3 border-t-2 border-r-2 rounded-tr-lg',
+                'bottom-3 left-3 border-b-2 border-l-2 rounded-bl-lg',
+                'bottom-3 right-3 border-b-2 border-r-2 rounded-br-lg',
+              ]).map(c => (
+                <div key={c} className={`absolute w-6 h-6 ${c}`} style={{ borderColor: 'var(--color-cyan)', opacity: 0.55 }} />
+              ))}
+            </div>
+          )}
+
+          {/* REC indicator */}
+          {appState === 'recording' && (
+            <div className="absolute top-4 left-4 flex items-center gap-2 glass rounded-full px-3 py-1.5" style={{ zIndex: 20 }}>
+              <div className="w-2 h-2 rounded-full animate-rec-blink" style={{ background: 'var(--color-rec)' }} />
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: '13px', color: 'var(--color-rec)', fontWeight: 600 }}>
+                REC {formatTime(recordingTime)}
+              </span>
+            </div>
+          )}
+
+          {/* Preview badge */}
+          {isPreviewMode && (
+            <div className="absolute top-4 left-4 glass rounded-full px-3 py-1.5 animate-fade-in" style={{ zIndex: 20 }}>
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: '13px', color: 'var(--color-cyan)', fontWeight: 600 }}>
+                {appState === 'playing' ? `▶ ${formatTime(playbackTime)}` : '⏸ プレビュー'}
+              </span>
+            </div>
+          )}
+
+          {/* Playback progress bar */}
+          {isPreviewMode && (
+            <div className="absolute bottom-0 left-0 right-0 h-1" style={{ zIndex: 20 }}>
+              <div className="h-full progress-bar transition-all"
+                style={{ width: appState === 'playing' ? `${(playbackTime / playbackDuration) * 100}%` : '100%', opacity: appState === 'playing' ? 1 : 0.3 }} />
+            </div>
+          )}
+
+          {/* ── Avatar controls (scale + picker trigger) ── */}
+          {isCapturing && (
+            <div className="absolute left-3 bottom-4 flex flex-col gap-2" style={{ zIndex: 20 }}>
+              {/* Avatar picker button */}
+              <button
+                className="glass rounded-xl px-2.5 py-2 flex items-center gap-1.5 transition-all active:scale-95"
+                style={{ border: `1px solid ${displayAvatarColor}44` }}
+                onClick={() => setShowAvatarPicker(v => !v)}
+              >
+                {useCustom && customAvatarUrl ? (
+                  <img src={customAvatarUrl} className="w-5 h-5 rounded-md object-cover" alt="" />
+                ) : (
+                  <span style={{ fontSize: '14px' }}>👤</span>
+                )}
+                <span style={{ fontSize: '10px', fontFamily: 'var(--font-display)', color: displayAvatarColor }}>
+                  {displayAvatarName}
+                </span>
+              </button>
+
+              {/* Scale controls */}
+              {(isLive2DActive || (useCustom ? !!avatarImgRef.current : !!presetSvgImgRef.current)) && (
+                <div className="glass rounded-xl flex items-center gap-1 px-2 py-1.5" style={{ border: '1px solid var(--color-border)' }}>
+                  <button
+                    className="w-6 h-6 rounded-lg flex items-center justify-center transition-all active:scale-90"
+                    style={{ background: 'rgba(255,63,164,0.2)', fontSize: '14px', lineHeight: 1, color: 'var(--color-pink)' }}
+                    onClick={() => adjustScale(-0.05)}
+                  >−</button>
+                  <span style={{ fontSize: '10px', fontFamily: 'var(--font-display)', color: 'var(--color-muted)', minWidth: '32px', textAlign: 'center' }}>
+                    {Math.round(vtScale * 100)}%
+                  </span>
+                  <button
+                    className="w-6 h-6 rounded-lg flex items-center justify-center transition-all active:scale-90"
+                    style={{ background: 'rgba(255,63,164,0.2)', fontSize: '14px', lineHeight: 1, color: 'var(--color-pink)' }}
+                    onClick={() => adjustScale(0.05)}
+                  >+</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Avatar picker popup */}
+          {showAvatarPicker && (
+            <div
+              className="absolute bottom-16 left-3 glass rounded-2xl p-3 animate-zoom-in"
+              style={{ zIndex: 30, width: '220px', border: '1px solid var(--color-border)' }}
+              onClick={e => e.stopPropagation()}
+            >
+              <p style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-display)', marginBottom: '8px' }}>プリセットキャラ</p>
+              <div className="flex gap-2 mb-3">
+                {PRESET_AVATARS.map((av, i) => (
+                  <button key={av.id}
+                    className="flex-1 flex flex-col items-center gap-1 rounded-xl py-2 transition-all"
+                    style={{
+                      background: !useCustom && selectedPreset === i ? `${av.color}22` : 'transparent',
+                      border: !useCustom && selectedPreset === i ? `1px solid ${av.color}55` : '1px solid transparent',
+                    }}
+                    onClick={() => { setSelectedPreset(i); setUseCustom(false); useCustomRef.current = false; useLive2DRef.current = false; live2d.cleanup(); setShowAvatarPicker(false) }}
+                  >
+                    <AvatarFace avatar={av} size={34} animated={false} />
+                    <span style={{ fontSize: '9px', color: av.color, fontFamily: 'var(--font-display)' }}>{av.name}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="h-px mb-3" style={{ background: 'var(--color-border)' }} />
+              <p style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-display)', marginBottom: '8px' }}>オリジナルVTuber</p>
+              {customAvatarUrl && (
+                <button
+                  className="w-full flex items-center gap-2 rounded-xl px-2.5 py-2 mb-2 transition-all"
+                  style={{
+                    background: useCustom ? 'rgba(255,63,164,0.15)' : 'transparent',
+                    border: useCustom ? '1px solid rgba(255,63,164,0.4)' : '1px solid var(--color-border)',
+                  }}
+                  onClick={() => { setUseCustom(true); setShowAvatarPicker(false) }}
+                >
+                  <img src={customAvatarUrl} className="w-8 h-8 rounded-lg object-cover shrink-0" alt="" />
+                  <span style={{ fontSize: '11px', color: 'var(--color-pink)', fontFamily: 'var(--font-display)', textAlign: 'left' }}>
+                    {avatarName}
+                  </span>
+                  {useCustom && <span style={{ marginLeft: 'auto', fontSize: '14px' }}>✓</span>}
+                </button>
+              )}
+              <button
+                className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 transition-all active:scale-95"
+                style={{ background: 'rgba(255,63,164,0.1)', border: '1px dashed rgba(255,63,164,0.45)' }}
+                onClick={() => { setShowAvatarPicker(false); fileInputRef.current?.click() }}
+              >
+                <span style={{ fontSize: '16px' }}>📁</span>
+                <span style={{ fontSize: '11px', color: 'var(--color-pink)', fontFamily: 'var(--font-display)' }}>
+                  {customAvatarUrl ? '画像を変更' : 'VTuberをアップロード'}
+                </span>
+              </button>
+              {(useCustom || isLive2DActive) && (
+                <p style={{ fontSize: '9px', color: 'var(--color-muted)', marginTop: '8px', textAlign: 'center' }}>
+                  ドラッグで移動・ピンチで拡縮
+                </p>
+              )}
+
+              {/* ── moc3 / Live2D section ── */}
+              <div className="h-px mt-3 mb-3" style={{ background: 'var(--color-border)' }} />
+              <p style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-display)', marginBottom: '8px' }}>
+                Live2D moc3 モデル
+              </p>
+
+              {/* Loaded model row */}
+              {live2d.status === 'loaded' && (
+                <button
+                  className="w-full flex items-center gap-2 rounded-xl px-2.5 py-2 mb-2 transition-all"
+                  style={{
+                    background: isLive2DActive ? 'rgba(0,229,255,0.15)' : 'transparent',
+                    border: isLive2DActive ? '1px solid rgba(0,229,255,0.4)' : '1px solid var(--color-border)',
+                  }}
+                  onClick={() => { useLive2DRef.current = true; setUseCustom(false); useCustomRef.current = false; setShowAvatarPicker(false) }}
+                >
+                  <span style={{ fontSize: '18px' }}>🎭</span>
+                  <span style={{ fontSize: '11px', color: 'var(--color-cyan)', fontFamily: 'var(--font-display)', textAlign: 'left', flex: 1 }}>
+                    {live2d.modelName}
+                  </span>
+                  {isLive2DActive && <span style={{ fontSize: '12px', color: 'var(--color-cyan)' }}>✓</span>}
+                </button>
+              )}
+
+              {/* Folder select button */}
+              <button
+                className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 transition-all active:scale-95"
+                style={{
+                  background: live2d.status === 'loading' ? 'rgba(0,229,255,0.05)' : 'rgba(0,229,255,0.08)',
+                  border: '1px dashed rgba(0,229,255,0.4)',
+                  opacity: live2d.status === 'loading' ? 0.6 : 1,
+                }}
+                onClick={() => live2dFolderInputRef.current?.click()}
+                disabled={live2d.status === 'loading'}
+              >
+                {live2d.status === 'loading'
+                  ? <div className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: 'var(--color-cyan)' }} />
+                  : <span style={{ fontSize: '16px' }}>📂</span>}
+                <span style={{ fontSize: '11px', color: 'var(--color-cyan)', fontFamily: 'var(--font-display)' }}>
+                  {live2d.status === 'loaded' ? 'モデルを変更' : live2d.status === 'loading' ? '読み込み中…' : 'モデルフォルダを選択'}
+                </span>
+              </button>
+              <p style={{ fontSize: '9px', color: 'var(--color-muted)', marginTop: '6px', lineHeight: 1.6 }}>
+                .model3.json を含むフォルダを丸ごと選択してください
+              </p>
+
+              {/* Diagnostics panel — shown while loading and on error */}
+              {(live2d.status === 'loading' || live2d.status === 'error') && (
+                <Live2DDiagPanel
+                  diag={live2d.diagnostics}
+                  status={live2d.status}
+                  errorMsg={live2d.errorMsg}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Name input overlay */}
+          {showNameInput && (
+            <div className="absolute inset-0 flex items-center justify-center animate-fade-in" style={{ background: 'rgba(13,11,30,0.88)', zIndex: 40 }}>
+              <div className="glass rounded-3xl p-6 mx-6 w-full" style={{ border: '1px solid rgba(255,63,164,0.4)' }}>
+                <p style={{ fontFamily: 'var(--font-display)', fontSize: '15px', color: 'var(--color-text)', marginBottom: '4px', fontWeight: 600 }}>
+                  アップロード完了！
+                </p>
+                <p style={{ fontSize: '12px', color: 'var(--color-muted)', marginBottom: '16px' }}>
+                  VTuberの名前を設定してください
+                </p>
+                <input
+                  type="text"
+                  value={avatarName}
+                  onChange={e => setAvatarName(e.target.value)}
+                  className="w-full rounded-xl px-4 py-2.5 outline-none mb-3"
+                  style={{ background: 'var(--color-panel)', border: '1px solid var(--color-border)', color: 'var(--color-text)', fontFamily: 'var(--font-display)', fontSize: '16px' }}
+                  autoFocus
+                />
+                <button
+                  className="w-full rounded-xl py-2.5 transition-all active:scale-95 glow-pink"
+                  style={{ background: 'linear-gradient(135deg, var(--color-pink), var(--color-purple))', fontFamily: 'var(--font-display)', fontSize: '14px', color: 'white', fontWeight: 600 }}
+                  onClick={() => setShowNameInput(false)}
                 >
                   決定
                 </button>
