@@ -564,15 +564,28 @@ export default function App() {
 
     const mimeType = mimeCandidates.find(type => MediaRecorder.isTypeSupported(type)) ?? ''
 
-    let mr: MediaRecorder
-    try {
-      mr = mimeType
-        ? new MediaRecorder(combined, { mimeType })
-        : new MediaRecorder(combined)
-    } catch {
-      // Fallback to the browser's default recording format.
-      mr = new MediaRecorder(combined)
-    }
+    const recorderOptions: MediaRecorderOptions = {
+  videoBitsPerSecond: 12_000_000,
+  audioBitsPerSecond: 192_000,
+}
+
+if (mimeType) {
+  recorderOptions.mimeType = mimeType
+}
+
+let mr: MediaRecorder
+
+try {
+  mr = new MediaRecorder(combined, recorderOptions)
+} catch {
+  try {
+    mr = mimeType
+      ? new MediaRecorder(combined, { mimeType })
+      : new MediaRecorder(combined)
+  } catch {
+    mr = new MediaRecorder(combined)
+  }
+}
 
     const actualMimeType = mr.mimeType || mimeType || 'video/webm'
     recordedMimeTypeRef.current = actualMimeType
