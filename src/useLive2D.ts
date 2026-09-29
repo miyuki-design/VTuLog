@@ -265,33 +265,63 @@ export function useLive2D() {
       await loadCubismCore()
 
       // Step 3: Dynamic import after core is available
+      // pixi-live2d-display 0.4.x requires PixiJS v7 — window.PIXI must be set
+      // BEFORE importing pixi-live2d-display so it can reference the correct
+      // renderer/ticker internals at module evaluation time.
       const PIXI = await import('pixi.js')
       ;(window as any).PIXI = PIXI
+
+      // Flush the microtask queue so any PIXI internals that read window.PIXI
+      // during their own async init have a chance to settle before we load the
+      // Live2D module.
+      await new Promise<void>(r => setTimeout(r, 0))
+
       const { Live2DModel } = await import('pixi-live2d-display/cubism4')
 
-      // Step 4: Create PixiJS app + load model
+      // Step 4: Create a PixiJS v7 Application on an explicit <canvas>.
+      // Using an explicit canvas avoids the autoDetectRenderer path that can
+      // fire before the document is fully ready on some mobile browsers.
+      const canvas = document.createElement('canvas')
+      canvas.width = LIVE2D_CANVAS_SIZE
+      canvas.height = LIVE2D_CANVAS_SIZE
+
       const app = new PIXI.Application({
+        view: canvas,
         width: LIVE2D_CANVAS_SIZE,
         height: LIVE2D_CANVAS_SIZE,
         backgroundAlpha: 0,
         preserveDrawingBuffer: true,
         antialias: true,
         powerPreference: 'low-power',
+        autoDensity: false,
+        resolution: 1,
       })
-      pixiAppRef.current = app
-      pixiCanvasRef.current = app.view as HTMLCanvasElement
 
-      const model = await (Live2DModel as any).from(model3Url)
+      // Verify the renderer is ready before touching Live2D
+      if (!app.renderer || !(app.renderer as any).canvas) {
+        throw new Error('PixiJS renderer の初期化に失敗しました')
+      }
+
+      pixiAppRef.current = app
+      pixiCanvasRef.current = canvas
+
+      // Step 5: Load the model — now that app.renderer.canvas exists
+      const model = await (Live2DModel as any).from(model3Url, { autoInteract: false })
       app.stage.addChild(model)
 
+      // Wait one tick for the model to lay out before reading width/height
+      await new Promise<void>(r => requestAnimationFrame(() => r()))
+
+      const mw = model.width  || LIVE2D_CANVAS_SIZE
+      const mh = model.height || LIVE2D_CANVAS_SIZE
       const sc = Math.min(
-        (LIVE2D_CANVAS_SIZE * 0.9) / model.width,
-        (LIVE2D_CANVAS_SIZE * 0.9) / model.height,
+        (LIVE2D_CANVAS_SIZE * 0.9) / mw,
+        (LIVE2D_CANVAS_SIZE * 0.9) / mh,
       )
       model.scale.set(sc)
       model.position.set(
-        (LIVE2D_CANVAS_SIZE - model.width * sc) / 2,
-        (LIVE2D_CANVAS_SIZE - model.height * sc) / 2,
+        (LIVE2D_CANVAS_SIZE - mw * sc) / 2,
+        (LIVE2D_CANVAS_SIZE - mh * sc) / 2,
       )
 
       loadedRef.current = true
