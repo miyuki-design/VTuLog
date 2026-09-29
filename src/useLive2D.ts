@@ -5,6 +5,15 @@ export const LIVE2D_CANVAS_SIZE = 512
 // ──────────────────────────────────────────────
 // Types
 // ──────────────────────────────────────────────
+
+export interface FetchProbe {
+  label: string   // "model3.json" / "moc3" / "texture[0]" etc.
+  url: string     // blob: URL (first 60 chars shown in UI)
+  ok: boolean
+  status: number | null  // null = fetch threw (no HTTP response)
+  error?: string
+}
+
 export interface Live2DDiagnostics {
   fileCount: number
   model3Name: string | null
@@ -15,6 +24,12 @@ export interface Live2DDiagnostics {
   physicsFile: string | null
   physicsResolved: boolean
   unresolvedPaths: string[]
+  // preflight fetch results (populated just before Live2DModel.from)
+  fetchProbes: FetchProbe[]
+  // NetworkError fields from pixi-live2d-display
+  networkErrorUrl?: string
+  networkErrorStatus?: number | null
+  networkErrorAborted?: boolean
 }
 
 export type Live2DStatus = 'idle' | 'loading' | 'loaded' | 'error'
@@ -26,6 +41,7 @@ const EMPTY_DIAG: Live2DDiagnostics = {
   textureCount: 0, texturesResolved: 0,
   physicsFile: null, physicsResolved: false,
   unresolvedPaths: [],
+  fetchProbes: [],
 }
 
 // ──────────────────────────────────────────────
@@ -59,36 +75,22 @@ async function loadCubismCore(): Promise<void> {
 }
 
 // ──────────────────────────────────────────────
-// File map builder
-// Registers each file under multiple lookup keys so that any of
-// these reference styles in model3.json will resolve:
-//   "foo.moc3"               → basename
-//   "textures/foo.png"       → path relative to model3.json dir
-//   "./textures/foo.png"     → same, with leading ./
-//   "ModelFolder/foo.moc3"   → full webkitRelativePath
+// File map builder — 3 lookup keys per file
 // ──────────────────────────────────────────────
 function buildFileMap(files: File[], model3File: File): Map<string, File> {
   const map = new Map<string, File>()
 
-  // Directory containing model3.json (e.g. "ModelFolder/sub/")
   const model3Dir = model3File.webkitRelativePath
     ? model3File.webkitRelativePath.split('/').slice(0, -1).join('/') + '/'
     : ''
 
   for (const f of files) {
     const wp = f.webkitRelativePath ?? ''
-
-    // 1. Full webkitRelativePath   e.g. "ModelFolder/textures/idle.png"
     if (wp) map.set(wp, f)
-
-    // 2. Path relative to model3.json's directory  e.g. "textures/idle.png"
     if (wp && model3Dir && wp.startsWith(model3Dir)) {
       const rel = wp.slice(model3Dir.length)
       if (rel) map.set(rel, f)
     }
-
-    // 3. Basename only  e.g. "idle.png"
-    //    (set last so a relative path match wins over plain name collisions)
     if (!map.has(f.name)) map.set(f.name, f)
   }
 
@@ -101,28 +103,27 @@ function buildFileMap(files: File[], model3File: File): Map<string, File> {
 function makeResolver(fileMap: Map<string, File>, blobUrls: Map<File, string>) {
   return (p: string): { url: string; resolved: boolean } => {
     if (!p) return { url: p, resolved: false }
-
-    const norm = p.startsWith('./') ? p.slice(2) : p  // strip leading ./
-
+    const norm = p.startsWith('./') ? p.slice(2) : p
     const file =
       fileMap.get(p) ??
       fileMap.get(norm) ??
       fileMap.get(p.split('/').pop()!)
-
     if (file) {
       if (!blobUrls.has(file)) blobUrls.set(file, URL.createObjectURL(file))
       return { url: blobUrls.get(file)!, resolved: true }
     }
-
     return { url: p, resolved: false }
   }
 }
 
 // ──────────────────────────────────────────────
-// Model preparation: parse model3.json, replace all paths with blob URLs
+// Model preparation
 // ──────────────────────────────────────────────
 interface PrepareResult {
   model3Url: string
+  mocBlobUrl: string | null
+  textureBlobUrls: string[]
+  physicsBlobUrl: string | null
   allBlobUrls: string[]
   diagnostics: Live2DDiagnostics
 }
@@ -130,7 +131,6 @@ interface PrepareResult {
 async function prepareModel(files: File[]): Promise<PrepareResult> {
   const diag: Live2DDiagnostics = { ...EMPTY_DIAG, fileCount: files.length }
 
-  // ── Find model3.json ──
   const model3File = files.find(f => f.name.endsWith('.model3.json'))
   if (!model3File) throw new Error('.model3.json が見つかりません（フォルダごと選択されましたか？）')
   diag.model3Name = model3File.name
@@ -139,7 +139,6 @@ async function prepareModel(files: File[]): Promise<PrepareResult> {
   const blobUrls = new Map<File, string>()
   const resolve = makeResolver(fileMap, blobUrls)
 
-  // ── Parse model3.json ──
   let model3: any
   try {
     model3 = JSON.parse(await model3File.text())
@@ -148,24 +147,27 @@ async function prepareModel(files: File[]): Promise<PrepareResult> {
   }
   const fr: any = model3.FileReferences ?? {}
 
+  // Track individual blob URLs for preflight
+  let mocBlobUrl: string | null = null
+  const textureBlobUrls: string[] = []
+  let physicsBlobUrl: string | null = null
+
   // ── Moc ──
   if (fr.Moc) {
     diag.mocFile = fr.Moc
     const r = resolve(fr.Moc)
     fr.Moc = r.url
     diag.mocResolved = r.resolved
-    if (!r.resolved) diag.unresolvedPaths.push(fr.Moc)
-  } else {
-    diag.mocFile = null
-    diag.mocResolved = false
+    if (r.resolved) mocBlobUrl = r.url
+    else diag.unresolvedPaths.push(diag.mocFile!)
   }
 
   // ── Textures ──
   if (Array.isArray(fr.Textures)) {
     diag.textureCount = fr.Textures.length
-    fr.Textures = fr.Textures.map((t: string) => {
+    fr.Textures = fr.Textures.map((t: string, i: number) => {
       const r = resolve(t)
-      if (r.resolved) diag.texturesResolved++
+      if (r.resolved) { diag.texturesResolved++; textureBlobUrls.push(r.url) }
       else diag.unresolvedPaths.push(t)
       return r.url
     })
@@ -177,7 +179,8 @@ async function prepareModel(files: File[]): Promise<PrepareResult> {
     const r = resolve(fr.Physics)
     fr.Physics = r.url
     diag.physicsResolved = r.resolved
-    if (!r.resolved) diag.unresolvedPaths.push(fr.Physics)
+    if (r.resolved) physicsBlobUrl = r.url
+    else diag.unresolvedPaths.push(diag.physicsFile!)
   }
 
   // ── Other optional refs ──
@@ -202,14 +205,81 @@ async function prepareModel(files: File[]): Promise<PrepareResult> {
     }
   }
 
-  // ── Patched model3.json → blob URL ──
   const patchedBlob = new Blob([JSON.stringify(model3)], { type: 'application/json' })
   const model3Url = URL.createObjectURL(patchedBlob)
 
   return {
     model3Url,
+    mocBlobUrl,
+    textureBlobUrls,
+    physicsBlobUrl,
     allBlobUrls: [model3Url, ...blobUrls.values()],
     diagnostics: diag,
+  }
+}
+
+// ──────────────────────────────────────────────
+// Preflight: fetch each blob URL and record result
+// ──────────────────────────────────────────────
+async function runPreflight(params: {
+  model3Url: string
+  mocBlobUrl: string | null
+  textureBlobUrls: string[]
+  physicsBlobUrl: string | null
+  mocFile: string | null
+  physicsFile: string | null
+}): Promise<FetchProbe[]> {
+  const probes: Array<{ label: string; url: string }> = [
+    { label: 'model3.json (patched)', url: params.model3Url },
+  ]
+  if (params.mocBlobUrl)
+    probes.push({ label: params.mocFile ?? 'moc3', url: params.mocBlobUrl })
+  params.textureBlobUrls.forEach((u, i) =>
+    probes.push({ label: `texture[${i}]`, url: u })
+  )
+  if (params.physicsBlobUrl)
+    probes.push({ label: params.physicsFile ?? 'physics3.json', url: params.physicsBlobUrl })
+
+  const results: FetchProbe[] = []
+
+  await Promise.all(probes.map(async ({ label, url }) => {
+    let ok = false
+    let status: number | null = null
+    let error: string | undefined
+
+    try {
+      const res = await fetch(url)
+      ok = res.ok
+      status = res.status
+      // Drain to avoid memory leak on large textures
+      await res.arrayBuffer().catch(() => {})
+    } catch (e) {
+      error = (e as Error).message
+    }
+
+    results.push({ label, url, ok, status, error })
+  }))
+
+  // Keep same order as probes
+  return probes.map(p => results.find(r => r.url === p.url)!)
+}
+
+// ──────────────────────────────────────────────
+// Decode pixi-live2d-display NetworkError
+// ──────────────────────────────────────────────
+function parseNetworkError(e: unknown): {
+  message: string
+  url?: string
+  status?: number | null
+  aborted?: boolean
+} {
+  if (!e || typeof e !== 'object') return { message: String(e) }
+  const err = e as any
+  return {
+    message: err.message ?? 'Network error',
+    url: err.url ?? undefined,
+    status: typeof err.status === 'number' ? err.status : undefined,
+    aborted: typeof err.aborted === 'boolean' ? err.aborted : undefined,
   }
 }
 
@@ -217,14 +287,14 @@ async function prepareModel(files: File[]): Promise<PrepareResult> {
 // Hook
 // ──────────────────────────────────────────────
 export function useLive2D() {
-  const pixiAppRef = useRef<any>(null)
+  const pixiAppRef    = useRef<any>(null)
   const pixiCanvasRef = useRef<HTMLCanvasElement | null>(null)
-  const loadedRef = useRef(false)
+  const loadedRef     = useRef(false)
   const allBlobUrlsRef = useRef<string[]>([])
 
-  const [status, setStatus] = useState<Live2DStatus>('idle')
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [modelName, setModelName] = useState('')
+  const [status,      setStatus]      = useState<Live2DStatus>('idle')
+  const [errorMsg,    setErrorMsg]    = useState<string | null>(null)
+  const [modelName,   setModelName]   = useState('')
   const [diagnostics, setDiagnostics] = useState<Live2DDiagnostics | null>(null)
 
   const cleanup = useCallback(() => {
@@ -245,8 +315,7 @@ export function useLive2D() {
     cleanup()
     setStatus('loading')
 
-    // Show file count and model3 name immediately
-    const model3File = files.find(f => f.name.endsWith('.model3.json'))
+    const model3File  = files.find(f => f.name.endsWith('.model3.json'))
     const initialName = model3File?.name.replace('.model3.json', '') ?? 'モデル'
     setModelName(initialName)
     setDiagnostics({
@@ -256,37 +325,51 @@ export function useLive2D() {
     })
 
     try {
-      // Step 1: Prepare files (resolve paths → blob URLs, collect diagnostics)
-      const { model3Url, allBlobUrls, diagnostics: diag } = await prepareModel(files)
+      // ── Step 1: Resolve all paths to blob URLs ──
+      const {
+        model3Url, mocBlobUrl, textureBlobUrls, physicsBlobUrl,
+        allBlobUrls, diagnostics: diag,
+      } = await prepareModel(files)
       allBlobUrlsRef.current = allBlobUrls
-      setDiagnostics(diag)  // update with full diagnostics before heavy load
+      setDiagnostics({ ...diag })
 
-      // Step 2: Load Cubism Core
+      // ── Step 2: Preflight — fetch every blob URL before handing to Live2D ──
+      const probes = await runPreflight({
+        model3Url,
+        mocBlobUrl,
+        textureBlobUrls,
+        physicsBlobUrl,
+        mocFile: diag.mocFile,
+        physicsFile: diag.physicsFile,
+      })
+      setDiagnostics(prev => ({ ...(prev ?? diag), fetchProbes: probes }))
+
+      const failedProbes = probes.filter(p => !p.ok)
+      if (failedProbes.length > 0) {
+        const detail = failedProbes.map(p =>
+          `${p.label}: ${p.error ?? `HTTP ${p.status}`}`
+        ).join('\n')
+        throw new Error(`Blob URL の fetch に失敗しました:\n${detail}`)
+      }
+
+      // ── Step 3: Load Cubism Core ──
       await loadCubismCore()
 
-      // Step 3: PixiJS v7 — window.PIXI must be set BEFORE importing
-      // pixi-live2d-display so the plugin captures the correct ticker/renderer.
-      // (pixi-live2d-display 0.4.x peer-deps: pixi.js ^7; v8 is incompatible.)
+      // ── Step 4: PixiJS v7 setup ──
+      // pixi-live2d-display 0.4.x requires pixi.js ^7 (v8 is incompatible).
+      // window.PIXI must be set before importing the plugin.
       const PIXI = await import('pixi.js')
       ;(window as any).PIXI = PIXI
-
-      // One macrotask gap: lets any PIXI global listeners settle before the
-      // Live2D module evaluates and hooks into window.PIXI.
-      await new Promise<void>(r => setTimeout(r, 0))
+      await new Promise<void>(r => setTimeout(r, 0))  // let PIXI hooks settle
 
       const { Live2DModel } = await import('pixi-live2d-display/cubism4')
 
-      // Step 4: PixiJS v7 Application — constructor is synchronous.
-      // Pass an explicit canvas so we own the element lifecycle; avoids a
-      // Safari race in autoDetectRenderer.  Force WebGL (not WebGPU) via
-      // forceCanvas: false + preference: 'webgl' so iPhone Safari uses a path
-      // that pixi-live2d-display's renderer access pattern supports.
       const canvas = document.createElement('canvas')
       canvas.width  = LIVE2D_CANVAS_SIZE
       canvas.height = LIVE2D_CANVAS_SIZE
 
       const app = new PIXI.Application({
-        view: canvas,           // v7 API — NOT app.canvas (that's v8)
+        view: canvas,           // v7: app.view — NOT app.canvas (v8)
         width: LIVE2D_CANVAS_SIZE,
         height: LIVE2D_CANVAS_SIZE,
         backgroundAlpha: 0,
@@ -295,23 +378,20 @@ export function useLive2D() {
         powerPreference: 'low-power',
         autoDensity: false,
         resolution: 1,
-        forceCanvas: false,     // prefer WebGL over software canvas
+        forceCanvas: false,     // WebGL preferred; avoids WebGPU on Safari
       } as any)
 
-      // Guard: renderer must be initialised before Live2D touches it.
-      // In v7, the canvas surface is app.view (an ICanvas / HTMLCanvasElement).
       if (!app.renderer || !app.view) {
         throw new Error('PixiJS renderer の初期化に失敗しました')
       }
 
-      pixiAppRef.current  = app
-      pixiCanvasRef.current = canvas  // same object as app.view
+      pixiAppRef.current    = app
+      pixiCanvasRef.current = canvas
 
-      // Step 5: Load model after renderer is confirmed ready.
+      // ── Step 5: Load Live2D model ──
       const model = await (Live2DModel as any).from(model3Url, { autoInteract: false })
       app.stage.addChild(model)
 
-      // One rAF so the model lays out and reports real dimensions.
       await new Promise<void>(r => requestAnimationFrame(() => r()))
 
       const mw = model.width  || LIVE2D_CANVAS_SIZE
@@ -328,11 +408,26 @@ export function useLive2D() {
 
       loadedRef.current = true
       setStatus('loaded')
+
     } catch (e) {
-      const msg = (e as Error).message ?? 'モデルの読み込みに失敗しました'
+      // pixi-live2d-display throws NetworkError objects with .url / .status / .aborted
+      const ne = parseNetworkError(e)
+
+      // Build a human-readable error string including NetworkError fields
+      let msg = ne.message
+      if (ne.url)    msg += `\nURL: ${ne.url}`
+      if (ne.status != null) msg += `\nHTTP status: ${ne.status}`
+      if (ne.aborted) msg += '\n(aborted)'
+
       setErrorMsg(msg)
+      setDiagnostics(prev => prev ? {
+        ...prev,
+        networkErrorUrl:     ne.url,
+        networkErrorStatus:  ne.status,
+        networkErrorAborted: ne.aborted,
+      } : null)
       setStatus('error')
-      // keep diagnostics so user can see what was/wasn't resolved
+
       if (pixiAppRef.current) {
         try { pixiAppRef.current.destroy(true) } catch { /* ignore */ }
         pixiAppRef.current = null
