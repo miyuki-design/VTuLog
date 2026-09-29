@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useLive2D, LIVE2D_CANVAS_SIZE } from './useLive2D'
 
 type AppState = 'idle' | 'recording' | 'preview' | 'playing'
 
@@ -58,7 +59,7 @@ function formatTime(s: number) {
   return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`
 }
 
-function getTouchDist(t1: Touch, t2: Touch) {
+function getTouchDist(t1: { clientX: number; clientY: number }, t2: { clientX: number; clientY: number }) {
   return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY)
 }
 
@@ -116,6 +117,11 @@ export default function App() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const playbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // ── Live2D ──
+  const live2d = useLive2D()
+  const useLive2DRef = useRef(false)
+  const live2dFolderInputRef = useRef<HTMLInputElement>(null)
+
   // ── UI ──
   const [showSaved, setShowSaved] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -124,8 +130,9 @@ export default function App() {
   const isCapturing = appState === 'idle' || appState === 'recording'
   const isPreviewMode = appState === 'preview' || appState === 'playing'
   const presetAvatar = PRESET_AVATARS[selectedPreset]
-  const displayAvatarName = useCustom ? avatarName : presetAvatar.name
-  const displayAvatarColor = useCustom ? '#FF3FA4' : presetAvatar.color
+  const isLive2DActive = live2d.status === 'loaded'
+  const displayAvatarName = isLive2DActive ? live2d.modelName : useCustom ? avatarName : presetAvatar.name
+  const displayAvatarColor = isLive2DActive ? '#00E5FF' : useCustom ? '#FF3FA4' : presetAvatar.color
 
   // ── Camera init ──
   useEffect(() => {
@@ -167,6 +174,19 @@ export default function App() {
 
   // ── Sync useCustom to ref ──
   useEffect(() => { useCustomRef.current = useCustom }, [useCustom])
+
+  // ── Sync Live2D loaded state to ref + set initial position ──
+  useEffect(() => {
+    useLive2DRef.current = live2d.status === 'loaded'
+    if (live2d.status === 'loaded') {
+      const displayPx = 240
+      const sc = displayPx / LIVE2D_CANVAS_SIZE
+      vtScaleRef.current = sc
+      setVtScale(sc)
+      vtPosRef.current = { x: CW - LIVE2D_CANVAS_SIZE * sc - 20, y: CH - LIVE2D_CANVAS_SIZE * sc - 100 }
+      setShowAvatarPicker(false)
+    }
+  }, [live2d.status])
 
   // ── Load preset SVG into Image ──
   useEffect(() => {
@@ -211,11 +231,16 @@ export default function App() {
         for (let y = 0; y < CH; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CW, y); ctx.stroke() }
       }
 
-      const img = useCustomRef.current ? avatarImgRef.current : presetSvgImgRef.current
-      if (img && img.complete) {
-        const { x, y } = vtPosRef.current
-        const sc = vtScaleRef.current
-        ctx.drawImage(img, x, y, img.naturalWidth * sc, img.naturalHeight * sc)
+      const { x, y } = vtPosRef.current
+      const sc = vtScaleRef.current
+      if (useLive2DRef.current && live2d.pixiCanvasRef.current) {
+        const sz = LIVE2D_CANVAS_SIZE * sc
+        ctx.drawImage(live2d.pixiCanvasRef.current, 0, 0, LIVE2D_CANVAS_SIZE, LIVE2D_CANVAS_SIZE, x, y, sz, sz)
+      } else {
+        const img = useCustomRef.current ? avatarImgRef.current : presetSvgImgRef.current
+        if (img && img.complete) {
+          ctx.drawImage(img, x, y, img.naturalWidth * sc, img.naturalHeight * sc)
+        }
       }
 
       rafRef.current = requestAnimationFrame(draw)
@@ -235,10 +260,14 @@ export default function App() {
   }, [])
 
   const hitTest = useCallback((cx: number, cy: number) => {
-    const img = useCustomRef.current ? avatarImgRef.current : presetSvgImgRef.current
-    if (!img) return false
     const { x, y } = vtPosRef.current
     const sc = vtScaleRef.current
+    if (useLive2DRef.current) {
+      const sz = LIVE2D_CANVAS_SIZE * sc
+      return cx >= x && cx <= x + sz && cy >= y && cy <= y + sz
+    }
+    const img = useCustomRef.current ? avatarImgRef.current : presetSvgImgRef.current
+    if (!img) return false
     return cx >= x && cx <= x + img.naturalWidth * sc && cy >= y && cy <= y + img.naturalHeight * sc
   }, [])
 
@@ -329,7 +358,15 @@ export default function App() {
     setVtScale(ns)
   }, [])
 
-  // ── File upload ──
+  // ── Live2D folder upload ──
+  const handleLive2DUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    if (!files.length) return
+    live2d.loadModel(files)
+    e.target.value = ''
+  }, [live2d])
+
+  // ── Image file upload ──
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -462,8 +499,18 @@ export default function App() {
       {/* hidden camera video source */}
       <video ref={hiddenVideoRef} autoPlay playsInline muted style={{ display: 'none' }} />
 
-      {/* hidden file input */}
+      {/* hidden file inputs */}
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+      {/* webkitdirectory lets user pick entire model folder */}
+      <input
+        ref={live2dFolderInputRef}
+        type="file"
+        // @ts-ignore – webkitdirectory is non-standard but widely supported
+        webkitdirectory=""
+        multiple
+        className="hidden"
+        onChange={handleLive2DUpload}
+      />
 
       {/* phone frame */}
       <div
@@ -623,7 +670,7 @@ export default function App() {
               </button>
 
               {/* Scale controls */}
-              {(useCustom ? !!avatarImgRef.current : !!presetSvgImgRef.current) && (
+              {(isLive2DActive || (useCustom ? !!avatarImgRef.current : !!presetSvgImgRef.current)) && (
                 <div className="glass rounded-xl flex items-center gap-1 px-2 py-1.5" style={{ border: '1px solid var(--color-border)' }}>
                   <button
                     className="w-6 h-6 rounded-lg flex items-center justify-center transition-all active:scale-90"
@@ -659,7 +706,7 @@ export default function App() {
                       background: !useCustom && selectedPreset === i ? `${av.color}22` : 'transparent',
                       border: !useCustom && selectedPreset === i ? `1px solid ${av.color}55` : '1px solid transparent',
                     }}
-                    onClick={() => { setSelectedPreset(i); setUseCustom(false); useCustomRef.current = false; setShowAvatarPicker(false) }}
+                    onClick={() => { setSelectedPreset(i); setUseCustom(false); useCustomRef.current = false; useLive2DRef.current = false; live2d.cleanup(); setShowAvatarPicker(false) }}
                   >
                     <AvatarFace avatar={av} size={34} animated={false} />
                     <span style={{ fontSize: '9px', color: av.color, fontFamily: 'var(--font-display)' }}>{av.name}</span>
@@ -694,11 +741,66 @@ export default function App() {
                   {customAvatarUrl ? '画像を変更' : 'VTuberをアップロード'}
                 </span>
               </button>
-              {useCustom && (
+              {(useCustom || isLive2DActive) && (
                 <p style={{ fontSize: '9px', color: 'var(--color-muted)', marginTop: '8px', textAlign: 'center' }}>
                   ドラッグで移動・ピンチで拡縮
                 </p>
               )}
+
+              {/* ── moc3 / Live2D section ── */}
+              <div className="h-px mt-3 mb-3" style={{ background: 'var(--color-border)' }} />
+              <p style={{ fontSize: '10px', color: 'var(--color-muted)', fontFamily: 'var(--font-display)', marginBottom: '8px' }}>
+                Live2D moc3 モデル
+              </p>
+
+              {/* Loaded model row */}
+              {live2d.status === 'loaded' && (
+                <button
+                  className="w-full flex items-center gap-2 rounded-xl px-2.5 py-2 mb-2 transition-all"
+                  style={{
+                    background: isLive2DActive ? 'rgba(0,229,255,0.15)' : 'transparent',
+                    border: isLive2DActive ? '1px solid rgba(0,229,255,0.4)' : '1px solid var(--color-border)',
+                  }}
+                  onClick={() => { useLive2DRef.current = true; setUseCustom(false); useCustomRef.current = false; setShowAvatarPicker(false) }}
+                >
+                  <span style={{ fontSize: '18px' }}>🎭</span>
+                  <span style={{ fontSize: '11px', color: 'var(--color-cyan)', fontFamily: 'var(--font-display)', textAlign: 'left', flex: 1 }}>
+                    {live2d.modelName}
+                  </span>
+                  {isLive2DActive && <span style={{ fontSize: '12px', color: 'var(--color-cyan)' }}>✓</span>}
+                </button>
+              )}
+
+              {/* Loading state */}
+              {live2d.status === 'loading' && (
+                <div className="flex items-center gap-2 py-2 mb-2">
+                  <div className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin shrink-0" style={{ borderColor: 'var(--color-cyan)' }} />
+                  <span style={{ fontSize: '11px', color: 'var(--color-muted)' }}>読み込み中…</span>
+                </div>
+              )}
+
+              {/* Error state */}
+              {live2d.status === 'error' && (
+                <div className="rounded-xl px-2.5 py-2 mb-2" style={{ background: 'rgba(255,59,59,0.1)', border: '1px solid rgba(255,59,59,0.3)' }}>
+                  <p style={{ fontSize: '10px', color: 'rgba(255,100,100,0.9)', lineHeight: 1.5 }}>{live2d.errorMsg}</p>
+                </div>
+              )}
+
+              {/* Folder select button */}
+              <button
+                className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 transition-all active:scale-95"
+                style={{ background: 'rgba(0,229,255,0.08)', border: '1px dashed rgba(0,229,255,0.4)' }}
+                onClick={() => live2dFolderInputRef.current?.click()}
+                disabled={live2d.status === 'loading'}
+              >
+                <span style={{ fontSize: '16px' }}>📂</span>
+                <span style={{ fontSize: '11px', color: 'var(--color-cyan)', fontFamily: 'var(--font-display)' }}>
+                  {live2d.status === 'loaded' ? 'モデルを変更' : 'モデルフォルダを選択'}
+                </span>
+              </button>
+              <p style={{ fontSize: '9px', color: 'var(--color-muted)', marginTop: '6px', lineHeight: 1.6 }}>
+                .model3.json を含むフォルダを丸ごと選択してください
+              </p>
             </div>
           )}
 
