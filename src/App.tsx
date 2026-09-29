@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useLive2D, LIVE2D_CANVAS_SIZE, type Live2DDiagnostics } from './useLive2D'
+import { useLive2D, LIVE2D_CANVAS_SIZE, type Live2DDiagnostics, type NormalizedFileInfo } from './useLive2D'
 
 type AppState = 'idle' | 'recording' | 'preview' | 'playing'
 
@@ -111,50 +111,52 @@ function Live2DDiagPanel({
           />
         </div>
 
-        {/* ── 2. Path resolution diagnostics ── */}
-        {(diag.model3WebkitPath || diag.settingsUrl || diag.resolvedMocPath) && (
+        {/* ── 2. Path resolution (moc match check) ── */}
+        {(diag.settingsUrl || diag.resolvedMocPath) && (
           <div style={{ marginTop: '8px', padding: '6px 8px', borderRadius: '7px', background: 'rgba(0,229,255,0.04)', border: '1px solid rgba(0,229,255,0.12)' }}>
             <p style={{ fontSize: '9px', color: CYAN, marginBottom: '4px', fontFamily: 'var(--font-display)', letterSpacing: '0.05em' }}>パス解決</p>
-            {diag.model3WebkitPath && (
-              <p style={{ ...MONO, color: MUTED }}>
-                <span style={{ color: '#5A527A' }}>webkitRelPath: </span>{diag.model3WebkitPath}
-              </p>
-            )}
             {diag.settingsUrl && (
-              <p style={{ ...MONO, color: MUTED }}>
-                <span style={{ color: '#5A527A' }}>settings.url:  </span>{diag.settingsUrl}
+              <p style={{ ...MONO, color: MUTED }}><span style={{ color: '#5A527A' }}>settings.url: </span>{diag.settingsUrl}</p>
+            )}
+            {diag.resolvedMocPath && (
+              <p style={{ ...MONO, color: diag.mocPathMatch === false ? RED : CYAN }}>
+                <span style={{ color: '#5A527A' }}>resolveURL(moc): </span>{diag.resolvedMocPath}
               </p>
             )}
-            {diag.resolvedMocPath && (() => {
-              const mocActualPath = diag.allWebkitPaths.find(p => p.endsWith('.moc3'))
-              const match = mocActualPath === diag.resolvedMocPath
-              return (
-                <>
-                  <p style={{ ...MONO, color: match ? CYAN : RED }}>
-                    <span style={{ color: '#5A527A' }}>resolveURL(moc): </span>{diag.resolvedMocPath}
-                  </p>
-                  {mocActualPath && (
-                    <p style={{ ...MONO, color: match ? CYAN : RED }}>
-                      <span style={{ color: '#5A527A' }}>actual webkit:   </span>{mocActualPath}
-                      <span style={{ marginLeft: '6px' }}>{match ? '✓ 一致' : '✗ 不一致'}</span>
-                    </p>
-                  )}
-                </>
-              )
-            })()}
+            {diag.mocNormalizedPath && (
+              <p style={{ ...MONO, color: diag.mocPathMatch === false ? RED : CYAN }}>
+                <span style={{ color: '#5A527A' }}>webkit(正規化後): </span>{diag.mocNormalizedPath}
+                {diag.mocPathMatch !== null && (
+                  <span style={{ marginLeft: '6px', color: diag.mocPathMatch ? CYAN : RED }}>
+                    {diag.mocPathMatch ? '✓ 一致' : '✗ 不一致'}
+                  </span>
+                )}
+              </p>
+            )}
           </div>
         )}
 
-        {/* ── 3. All webkitRelativePaths ── */}
-        {diag.allWebkitPaths.length > 0 && (
+        {/* ── 3. Per-file normalization log ── */}
+        {diag.normalizedFiles.length > 0 && (
           <div style={{ marginTop: '6px' }}>
             <p style={{ fontSize: '9px', color: MUTED, marginBottom: '3px', fontFamily: 'var(--font-display)' }}>
-              選択ファイル一覧 ({diag.allWebkitPaths.length}件)
+              webkitRelativePath 正規化 ({diag.normalizedFiles.length}件)
             </p>
-            <div style={{ maxHeight: '80px', overflowY: 'auto', padding: '4px 6px', borderRadius: '6px', background: 'rgba(255,255,255,0.03)' }}>
-              {diag.allWebkitPaths.map((p, i) => (
-                <p key={i} style={{ ...MONO, color: '#5A527A' }}>{p}</p>
-              ))}
+            <div style={{ maxHeight: '100px', overflowY: 'auto', padding: '4px 6px', borderRadius: '6px', background: 'rgba(255,255,255,0.03)' }}>
+              {(diag.normalizedFiles as NormalizedFileInfo[]).map((f, i) => {
+                const changed = f.originalPath !== f.normalizedPath
+                return (
+                  <div key={i} style={{ marginBottom: '3px' }}>
+                    <p style={{ ...MONO, color: changed ? CYAN : '#5A527A' }}>{f.name}</p>
+                    {changed && (
+                      <>
+                        <p style={{ ...MONO, color: '#5A527A', paddingLeft: '8px' }}>旧: {f.originalPath || '(空)'}</p>
+                        <p style={{ ...MONO, color: CYAN,     paddingLeft: '8px' }}>新: {f.normalizedPath}</p>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}
