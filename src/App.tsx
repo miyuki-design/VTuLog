@@ -237,6 +237,17 @@ export default function App() {
   const vtScaleRef = useRef(1)
   const [vtScale, setVtScale] = useState(1)
 
+  const saveAvatarTransform = useCallback(() => {
+  localStorage.setItem(
+    'vtulog-avatar-transform',
+    JSON.stringify({
+      x: vtPosRef.current.x,
+      y: vtPosRef.current.y,
+      scale: vtScaleRef.current,
+    })
+  )
+}, [])
+  
   // ── Drag ──
   const isDraggingRef = useRef(false)
   const dragOffsetRef = useRef({ x: 0, y: 0 })
