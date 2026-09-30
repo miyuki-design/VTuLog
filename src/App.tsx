@@ -281,6 +281,7 @@ export default function App() {
   const [showSaved, setShowSaved] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [micError, setMicError] = useState<string | null>(null)
+  const [videoTrackInfo, setVideoTrackInfo] = useState('')
 
   const isCapturing = appState === 'idle' || appState === 'recording'
   const isPreviewMode = appState === 'preview' || appState === 'playing'
@@ -596,9 +597,11 @@ export default function App() {
 
     const canvasStream = (canvas as HTMLCanvasElement & { captureStream(fps?: number): MediaStream }).captureStream(30)
     const videoTrack = canvasStream.getVideoTracks()[0]
+    const settings = videoTrack.getSettings()
 
-    console.log('Canvas size:', canvas.width, canvas.height)
-    console.log('Video track settings:', videoTrack.getSettings())
+    setVideoTrackInfo(
+    `Canvas: ${canvas.width}×${canvas.height} / Track: ${settings.width ?? '?'}×${settings.height ?? '?'} / ${settings.frameRate ?? '?'}fps`
+    )
     
     const tracks = [...canvasStream.getVideoTracks(), ...(audioStream?.getAudioTracks() ?? [])]
     const combined = new MediaStream(tracks)
@@ -830,6 +833,20 @@ try {
           </div>
         </div>
 
+        {videoTrackInfo && (
+  <div
+    style={{
+      fontSize: '10px',
+      color: 'var(--color-cyan)',
+      padding: '4px 12px',
+      textAlign: 'center',
+      flexShrink: 0,
+    }}
+  >
+    {videoTrackInfo}
+  </div>
+)}
+        
         {/* viewfinder */}
         <div className="relative flex-1 mx-3 rounded-2xl overflow-hidden" style={{ minHeight: 0 }}>
 
