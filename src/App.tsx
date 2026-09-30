@@ -595,6 +595,11 @@ export default function App() {
     }
 
     const canvasStream = (canvas as HTMLCanvasElement & { captureStream(fps?: number): MediaStream }).captureStream(30)
+    const videoTrack = canvasStream.getVideoTracks()[0]
+
+    console.log('Canvas size:', canvas.width, canvas.height)
+    console.log('Video track settings:', videoTrack.getSettings())
+    
     const tracks = [...canvasStream.getVideoTracks(), ...(audioStream?.getAudioTracks() ?? [])]
     const combined = new MediaStream(tracks)
 
