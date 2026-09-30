@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
+import { saveAvatarFiles } from './avatarStorage'
 
 export const LIVE2D_CANVAS_SIZE = 4096
 
