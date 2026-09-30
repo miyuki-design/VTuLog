@@ -443,7 +443,10 @@ export default function App() {
     e.preventDefault()
   }, [clientToCanvas])
 
-  const onMouseUp = useCallback(() => { isDraggingRef.current = false }, [])
+ const onMouseUp = useCallback(() => {
+  isDraggingRef.current = false
+  saveAvatarTransform()
+}, [saveAvatarTransform])
 
   // ── Touch drag + pinch ──
   const onTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
@@ -504,7 +507,8 @@ export default function App() {
         isDraggingRef.current = false
       }
     }
-  }, [clientToCanvas, hitTest])
+  saveAvatarTransform()
+}, [clientToCanvas, hitTest, saveAvatarTransform])
 
   // ── Scale buttons ──
   const adjustScale = useCallback((delta: number) => {
