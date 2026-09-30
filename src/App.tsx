@@ -617,7 +617,7 @@ export default function App() {
     const mimeType = mimeCandidates.find(type => MediaRecorder.isTypeSupported(type)) ?? ''
 
     const recorderOptions: MediaRecorderOptions = {
-  videoBitsPerSecond: 12_000_000,
+  videoBitsPerSecond: 20_000_000,
   audioBitsPerSecond: 192_000,
 }
 
