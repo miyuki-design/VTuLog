@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { saveAvatarFiles } from './avatarStorage'
+import { saveAvatarFiles, loadAvatarFiles } from './avatarStorage'
 
 export const LIVE2D_CANVAS_SIZE = 4096
 
@@ -389,7 +389,23 @@ export function useLive2D() {
     }
   }, [cleanup])
 
-  useEffect(() => () => cleanup(), [cleanup])
+useEffect(() => {
+  const restoreAvatar = async () => {
+    try {
+      const files = await loadAvatarFiles()
 
-  return { loadModel, cleanup, pixiCanvasRef, loadedRef, status, errorMsg, modelName, diagnostics }
+      if (!files || files.length === 0) return
+
+      await loadModel(files)
+    } catch (error) {
+      console.error('前回のアバターの復元に失敗しました', error)
+    }
+  }
+
+  restoreAvatar()
+}, [loadModel])
+
+useEffect(() => () => cleanup(), [cleanup])
+
+return { loadModel, cleanup, pixiCanvasRef, loadedRef, status, errorMsg, modelName, diagnostics }
 }
