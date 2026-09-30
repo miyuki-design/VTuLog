@@ -332,16 +332,44 @@ export default function App() {
 
   // ── Sync Live2D loaded state to ref + set initial position ──
   useEffect(() => {
-    useLive2DRef.current = live2d.status === 'loaded'
-    if (live2d.status === 'loaded') {
+  useLive2DRef.current = live2d.status === 'loaded'
+
+  if (live2d.status === 'loaded') {
+    const saved = localStorage.getItem('vtulog-avatar-transform')
+
+    if (saved) {
+      try {
+        const { x, y, scale } = JSON.parse(saved)
+
+        vtPosRef.current = { x, y }
+        vtScaleRef.current = scale
+        setVtScale(scale)
+      } catch {
+        const displayPx = 240
+        const sc = displayPx / LIVE2D_CANVAS_SIZE
+
+        vtScaleRef.current = sc
+        setVtScale(sc)
+        vtPosRef.current = {
+          x: CW - LIVE2D_CANVAS_SIZE * sc - 20,
+          y: CH - LIVE2D_CANVAS_SIZE * sc - 100,
+        }
+      }
+    } else {
       const displayPx = 240
       const sc = displayPx / LIVE2D_CANVAS_SIZE
+
       vtScaleRef.current = sc
       setVtScale(sc)
-      vtPosRef.current = { x: CW - LIVE2D_CANVAS_SIZE * sc - 20, y: CH - LIVE2D_CANVAS_SIZE * sc - 100 }
-      setShowAvatarPicker(false)
+      vtPosRef.current = {
+        x: CW - LIVE2D_CANVAS_SIZE * sc - 20,
+        y: CH - LIVE2D_CANVAS_SIZE * sc - 100,
+      }
     }
-  }, [live2d.status])
+
+    setShowAvatarPicker(false)
+  }
+}, [live2d.status])
 
   // ── Load preset SVG into Image ──
   useEffect(() => {
