@@ -515,7 +515,8 @@ export default function App() {
     const ns = Math.max(0.08, Math.min(5, vtScaleRef.current + delta))
     vtScaleRef.current = ns
     setVtScale(ns)
-  }, [])
+    saveAvatarTransform()
+  }, [saveAvatarTransform])
 
   // ── Live2D folder upload ──
   const handleLive2DUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
