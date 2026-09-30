@@ -357,6 +357,8 @@ export function useLive2D() {
       loadedRef.current = true
       setStatus('loaded')
 
+      await saveAvatarFiles(files)
+
     } catch (e) {
       const ne = parseNetworkError(e)
       let msg = ne.message
