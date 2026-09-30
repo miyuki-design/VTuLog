@@ -652,15 +652,51 @@ try {
   }, [])
 
   // ── Retake ──
-  const retake = useCallback(() => {
-    if (playbackTimerRef.current) clearInterval(playbackTimerRef.current)
-    const pv = previewVideoRef.current
-    if (pv) { pv.pause(); pv.src = '' }
-    recordedBlobRef.current = null
-    setRecordingTime(0)
-    setPlaybackTime(0)
-    setAppState('idle')
-  }, [])
+  const retake = useCallback(async () => {
+  if (playbackTimerRef.current) clearInterval(playbackTimerRef.current)
+
+  const pv = previewVideoRef.current
+  if (pv) {
+    pv.pause()
+    pv.src = ''
+  }
+
+  recordedBlobRef.current = null
+  setRecordingTime(0)
+  setPlaybackTime(0)
+  setAppState('idle')
+
+  // 保存画面などを挟んでカメラが停止していたら再起動
+  const currentTrack = cameraStreamRef.current?.getVideoTracks()[0]
+
+  if (!currentTrack || currentTrack.readyState !== 'live') {
+    try {
+      setCameraReady(false)
+      setCameraError(null)
+
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 3840 },
+          height: { ideal: 2160 },
+          frameRate: { ideal: 30, max: 30 },
+        },
+        audio: false,
+      })
+
+      cameraStreamRef.current = s
+
+      const v = hiddenVideoRef.current
+      if (v) {
+        v.srcObject = s
+        await v.play()
+        setCameraReady(true)
+      }
+    } catch (e) {
+      setCameraError('カメラを再起動できませんでした')
+    }
+  }
+}, [])
 
   // ── Save ──
   const save = useCallback(() => {
