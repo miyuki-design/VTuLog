@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLive2D, LIVE2D_CANVAS_SIZE, type Live2DDiagnostics, type NormalizedFileInfo } from './useLive2D'
+import { FaceTracking } from './FaceTracking'
 
 type AppState = 'idle' | 'recording' | 'preview' | 'playing'
 
