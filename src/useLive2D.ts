@@ -407,5 +407,5 @@ useEffect(() => {
 
 useEffect(() => () => cleanup(), [cleanup])
 
-return { loadModel, cleanup, pixiCanvasRef, loadedRef, status, errorMsg, modelName, diagnostics }
+return { loadModel, cleanup, pixiAppRef, pixiCanvasRef, loadedRef, status, errorMsg, modelName, diagnostics }
 }
