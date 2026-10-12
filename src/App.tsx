@@ -834,6 +834,16 @@ try {
           </div>
         </div>
         
+        {/* Face tracking: front camera is not displayed or recorded */}
+        {isCapturing && isLive2DActive && (
+          <div style={{ padding: '0 20px 8px', flexShrink: 0 }}>
+            <FaceTracking
+              pixiAppRef={live2d.pixiAppRef}
+              rearStreamRef={cameraStreamRef}
+            />
+          </div>
+        )}
+
         {/* viewfinder */}
         <div className="relative flex-1 mx-3 rounded-2xl overflow-hidden" style={{ minHeight: 0 }}>
 
