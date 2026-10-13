@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLive2D, LIVE2D_CANVAS_SIZE, type Live2DDiagnostics, type NormalizedFileInfo } from './useLive2D'
-import { FaceTracking } from './FaceTracking'
 
 type AppState = 'idle' | 'recording' | 'preview' | 'playing'
 
@@ -834,16 +833,6 @@ try {
           </div>
         </div>
         
-        {/* Face tracking: front camera is not displayed or recorded */}
-        {isCapturing && isLive2DActive && (
-          <div style={{ padding: '0 20px 8px', flexShrink: 0 }}>
-            <FaceTracking
-              pixiAppRef={live2d.pixiAppRef}
-              rearStreamRef={cameraStreamRef}
-            />
-          </div>
-        )}
-
         {/* viewfinder */}
         <div className="relative flex-1 mx-3 rounded-2xl overflow-hidden" style={{ minHeight: 0 }}>
 
