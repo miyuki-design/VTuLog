@@ -834,7 +834,9 @@ try {
         </div>
         
         {/* viewfinder */}
-        <div className="relative flex-1 mx-3 rounded-2xl overflow-hidden" style={{ minHeight: 0 }}>
+        <div className="flex-1 mx-3 flex items-center justify-center" style={{ minHeight: 0, overflow: 'hidden' }}>
+          {/* The viewfinder has the same 9:16 ratio as the recorded 1080×1920 canvas. */}
+          <div className="relative rounded-2xl overflow-hidden" style={{ height: '100%', width: 'auto', aspectRatio: '9 / 16', maxWidth: '100%', maxHeight: '100%', flexShrink: 1 }}>
 
           {/* ── Canvas (camera + composited avatar) ── */}
           <canvas
@@ -843,7 +845,7 @@ try {
             height={CH}
             className="absolute inset-0 w-full h-full"
             style={{
-              objectFit: 'cover',
+              objectFit: 'contain',
               display: isCapturing ? 'block' : 'none',
               cursor: useCustom && avatarImgRef.current ? 'grab' : 'default',
               touchAction: 'none',
@@ -880,7 +882,7 @@ try {
             ref={previewVideoRef}
             playsInline
             className="absolute inset-0 w-full h-full"
-            style={{ objectFit: 'cover', display: isPreviewMode ? 'block' : 'none' }}
+            style={{ objectFit: 'contain', display: isPreviewMode ? 'block' : 'none' }}
           />
 
           {/* Recording border */}
@@ -1115,6 +1117,7 @@ try {
           {showAvatarPicker && (
             <div className="absolute inset-0" style={{ zIndex: 25 }} onClick={() => setShowAvatarPicker(false)} />
           )}
+          </div>
         </div>
 
         {/* mic error notice */}
