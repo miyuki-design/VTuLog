@@ -1,7 +1,12 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { saveAvatarFiles, loadAvatarFiles } from './avatarStorage'
 
-export const LIVE2D_CANVAS_SIZE = 4096
+// A 4096x4096 WebGL drawing buffer is costly on iOS WebKit.
+// This surface is composited into a 1080x1920 recording canvas;
+// 1024 is sufficient for the on-screen Live2D avatar.
+export const LIVE2D_CANVAS_SIZE = 1024
+
+const RESTORE_KEY = 'vtulog-live2d-restore-in-progress' 
 
 // ──────────────────────────────────────────────
 // Types
@@ -193,6 +198,7 @@ export function useLive2D() {
   const [status,      setStatus]      = useState<Live2DStatus>('idle')
   const [errorMsg,    setErrorMsg]    = useState<string | null>(null)
   const [modelName,   setModelName]   = useState('')
+  const [restoreBlocked, setRestoreBlocked] = useState(false)
   const [diagnostics, setDiagnostics] = useState<Live2DDiagnostics | null>(null)
 
   const cleanup = useCallback(() => {
@@ -319,7 +325,7 @@ export function useLive2D() {
         height: LIVE2D_CANVAS_SIZE,
         backgroundAlpha: 0,
         preserveDrawingBuffer: true,
-        antialias: true,
+        antialias: false,
         powerPreference: 'low-power',
         autoDensity: false,
         resolution: 1,
@@ -358,6 +364,8 @@ export function useLive2D() {
       setStatus('loaded')
 
       await saveAvatarFiles(files)
+      localStorage.removeItem(RESTORE_KEY)
+      setRestoreBlocked(false)
 
     } catch (e) {
       const ne = parseNetworkError(e)
@@ -375,6 +383,8 @@ export function useLive2D() {
         networkErrorStack:   ne.stack,
       } : null)
       setStatus('error')
+      // Ordinary loading errors do not need WebKit crash-loop protection.
+      localStorage.removeItem(RESTORE_KEY)
 
       if (pixiAppRef.current) {
         try { pixiAppRef.current.destroy(true) } catch { /* ignore */ }
@@ -389,23 +399,46 @@ export function useLive2D() {
     }
   }, [cleanup])
 
+// If WebKit kills its content process while restoring a model, the marker
+// survives the crash. On the next launch we show the rest of the app instead
+// of restoring the same problematic model forever.
 useEffect(() => {
   const restoreAvatar = async () => {
+    if (localStorage.getItem(RESTORE_KEY)) {
+      setRestoreBlocked(true)
+      return
+    }
     try {
       const files = await loadAvatarFiles()
-
       if (!files || files.length === 0) return
-
+      localStorage.setItem(RESTORE_KEY, '1')
       await loadModel(files)
     } catch (error) {
+      localStorage.removeItem(RESTORE_KEY)
       console.error('前回のアバターの復元に失敗しました', error)
     }
   }
+  void restoreAvatar()
+}, [loadModel])
 
-  restoreAvatar()
+const retrySavedAvatar = useCallback(async () => {
+  // Explicit opt-in lets the user test again without deleting stored models.
+  setRestoreBlocked(false)
+  localStorage.setItem(RESTORE_KEY, '1')
+  try {
+    const files = await loadAvatarFiles()
+    if (!files || files.length === 0) {
+      localStorage.removeItem(RESTORE_KEY)
+      return
+    }
+    await loadModel(files)
+  } catch (error) {
+    localStorage.removeItem(RESTORE_KEY)
+    console.error('保存アバターの再読込に失敗しました', error)
+  }
 }, [loadModel])
 
 useEffect(() => () => cleanup(), [cleanup])
 
-return { loadModel, cleanup, pixiAppRef, pixiCanvasRef, loadedRef, status, errorMsg, modelName, diagnostics }
+return { loadModel, retrySavedAvatar, restoreBlocked, cleanup, pixiAppRef, pixiCanvasRef, loadedRef, status, errorMsg, modelName, diagnostics }
 }

@@ -244,6 +244,8 @@ export default function App() {
       x: vtPosRef.current.x,
       y: vtPosRef.current.y,
       scale: vtScaleRef.current,
+      // Saved scale was relative to the previous Live2D canvas size.
+      canvasSize: useLive2DRef.current ? LIVE2D_CANVAS_SIZE : null,
     })
   )
 }, [])
@@ -296,7 +298,7 @@ export default function App() {
     ;(async () => {
       try {
         const s = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } ,frameRate: { ideal: 30, max: 30 },},
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } ,frameRate: { ideal: 30, max: 30 },},
           audio: false,
         })
         localStream = s
@@ -331,46 +333,45 @@ export default function App() {
   // ── Sync useCustom to ref ──
   useEffect(() => { useCustomRef.current = useCustom }, [useCustom])
 
-  // ── Sync Live2D loaded state to ref + set initial position ──
+  // ── Sync Live2D loaded state to ref + restore displayed avatar size ──
   useEffect(() => {
-  useLive2DRef.current = live2d.status === 'loaded'
+    useLive2DRef.current = live2d.status === 'loaded'
+    if (live2d.status !== 'loaded') return
 
-  if (live2d.status === 'loaded') {
-    const saved = localStorage.getItem('vtulog-avatar-transform')
-
-    if (saved) {
-      try {
-        const { x, y, scale } = JSON.parse(saved)
-
-        vtPosRef.current = { x, y }
-        vtScaleRef.current = scale
-        setVtScale(scale)
-      } catch {
-        const displayPx = 240
-        const sc = displayPx / LIVE2D_CANVAS_SIZE
-
-        vtScaleRef.current = sc
-        setVtScale(sc)
-        vtPosRef.current = {
-          x: CW - LIVE2D_CANVAS_SIZE * sc - 20,
-          y: CH - LIVE2D_CANVAS_SIZE * sc - 100,
-        }
-      }
-    } else {
-      const displayPx = 240
-      const sc = displayPx / LIVE2D_CANVAS_SIZE
-
-      vtScaleRef.current = sc
-      setVtScale(sc)
+    const resetTransform = () => {
+      const sizePx = 240
+      const scale = sizePx / LIVE2D_CANVAS_SIZE
+      vtScaleRef.current = scale
+      setVtScale(scale)
       vtPosRef.current = {
-        x: CW - LIVE2D_CANVAS_SIZE * sc - 20,
-        y: CH - LIVE2D_CANVAS_SIZE * sc - 100,
+        x: CW - sizePx - 20,
+        y: CH - sizePx - 100,
       }
     }
 
+    try {
+      const raw = localStorage.getItem('vtulog-avatar-transform')
+      if (!raw) throw new Error('No saved avatar transform')
+      const { x, y, scale, canvasSize } = JSON.parse(raw)
+      if (![x, y, scale].every(Number.isFinite) || scale <= 0) {
+        throw new Error('Invalid saved avatar transform')
+      }
+      // Older VTuLog versions saved no canvasSize. Their Live2D renderer
+      // was 4096px, so compensate when migrating to this 1024px version.
+      // Scale >= 0.5 without metadata normally belongs to a preset image.
+      const sourceSize = typeof canvasSize === 'number' && canvasSize > 0
+        ? canvasSize
+        : scale < 0.5 ? 4096 : 0
+      if (!sourceSize) throw new Error('Saved transform belongs to a preset')
+      const adjustedScale = scale * sourceSize / LIVE2D_CANVAS_SIZE
+      vtPosRef.current = { x, y }
+      vtScaleRef.current = adjustedScale
+      setVtScale(adjustedScale)
+    } catch {
+      resetTransform()
+    }
     setShowAvatarPicker(false)
-  }
-}, [live2d.status])
+  }, [live2d.status])
 
   // ── Load preset SVG into Image ──
   useEffect(() => {
@@ -729,8 +730,8 @@ try {
       const s = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: 'environment' },
-          width: { ideal: 3840 },
-          height: { ideal: 2160 },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
           frameRate: { ideal: 30, max: 30 },
         },
         audio: false,
@@ -1126,6 +1127,17 @@ try {
             style={{ background: 'rgba(255,59,59,0.1)', border: '1px solid rgba(255,59,59,0.3)' }}>
             <span style={{ fontSize: '12px' }}>🎙</span>
             <span style={{ fontSize: '10px', color: 'rgba(255,100,100,0.9)' }}>{micError}</span>
+          </div>
+        )}
+
+        {live2d.restoreBlocked && (
+          <div role="alert" className="mx-5 mt-2 rounded-xl px-3 py-2"
+            style={{ background: 'rgba(255,180,0,0.10)', border: '1px solid rgba(255,180,0,0.45)', fontSize: '11px' }}>
+            前回、Live2Dモデルの復元中に画面が終了した可能性があります。再発防止のため自動復元を一時停止しました。
+            <button type="button" onClick={() => { void live2d.retrySavedAvatar() }}
+              className="ml-2 underline" style={{ color: '#F6D277' }}>
+              保存モデルを再読み込み
+            </button>
           </div>
         )}
 
