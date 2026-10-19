@@ -325,7 +325,7 @@ export function useLive2D() {
         height: LIVE2D_CANVAS_SIZE,
         backgroundAlpha: 0,
         preserveDrawingBuffer: true,
-        antialias: true,
+        antialias: false,
         powerPreference: 'low-power',
         autoDensity: false,
         resolution: 1,
