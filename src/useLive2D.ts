@@ -4,7 +4,7 @@ import { saveAvatarFiles, loadAvatarFiles } from './avatarStorage'
 // A 4096x4096 WebGL drawing buffer is costly on iOS WebKit.
 // This surface is composited into a 1080x1920 recording canvas;
 // 1024 is sufficient for the on-screen Live2D avatar.
-export const LIVE2D_CANVAS_SIZE = 1024
+export const LIVE2D_CANVAS_SIZE = 4096
 
 const RESTORE_KEY = 'vtulog-live2d-restore-in-progress' 
 
